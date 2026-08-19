@@ -1,0 +1,6 @@
+{
+  "name": "Análise de Carga Máquina",
+  "description": "Sistema de Gestão e Análise de Carga Máquina por Centro de Trabalho e Projeto com Simulação de Capacidade e Prazos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
