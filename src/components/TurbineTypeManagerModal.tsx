@@ -601,7 +601,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                       <div className="min-w-0 pr-1.5">
                         <span className="text-xs font-black block truncate">{type.name}</span>
                         <span className={`text-[10px] font-medium ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
-                          {type.defaultHoursPerTurbine.toLocaleString()}h | {type.defaultDurationDays}d
+                          {(type.defaultHoursPerTurbine ?? 0).toLocaleString()}h | {type.defaultDurationDays ?? 0}d
                         </span>
                       </div>
 
@@ -745,7 +745,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                                 : 'text-blue-700'
                             }`}
                           >
-                            {totalCalculatedSectorHours.toLocaleString()}
+                            {(totalCalculatedSectorHours ?? 0).toLocaleString()}
                           </span>
                           <span className="text-xs font-bold text-slate-500 ml-1">h</span>
                         </div>
@@ -991,7 +991,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                 </div>
 
                 <div className="text-[10px] text-slate-500 font-medium italic">
-                  * Os pesos de cada setor são calculados sobre a Meta Base de {baseTargetHours.toLocaleString()}h.
+                  * Os pesos de cada setor são calculados sobre a Meta Base de {(baseTargetHours ?? 0).toLocaleString()}h.
                 </div>
               </div>
 
@@ -1126,7 +1126,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
           <div className="flex items-center gap-2 text-xs text-slate-600">
             <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
             <span className="hidden sm:inline">
-              Meta Base: <strong className="text-slate-900">{baseTargetHours.toLocaleString()}h</strong> | Total Calculado: <strong className={hoursDifference === 0 ? 'text-emerald-700' : 'text-amber-700'}>{totalCalculatedSectorHours.toLocaleString()}h ({totalBaseWeightSum}%)</strong>
+              Meta Base: <strong className="text-slate-900">{(baseTargetHours ?? 0).toLocaleString()}h</strong> | Total Calculado: <strong className={hoursDifference === 0 ? 'text-emerald-700' : 'text-amber-700'}>{(totalCalculatedSectorHours ?? 0).toLocaleString()}h ({totalBaseWeightSum}%)</strong>
             </span>
           </div>
 
@@ -1180,7 +1180,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
               <div className="flex justify-between text-slate-600">
                 <span>Meta Base Atual:</span>
                 <span className="font-bold text-slate-900">
-                  {confirmationDialog.baseTotal.toLocaleString()} h
+                  {(confirmationDialog.baseTotal ?? 0).toLocaleString()} h
                 </span>
               </div>
               <div className="flex justify-between text-slate-600">
@@ -1190,7 +1190,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                     confirmationDialog.weightSum > 100 ? 'text-amber-700' : 'text-blue-700'
                   }`}
                 >
-                  {confirmationDialog.calculatedTotal.toLocaleString()} h ({confirmationDialog.weightSum}%)
+                  {(confirmationDialog.calculatedTotal ?? 0).toLocaleString()} h ({confirmationDialog.weightSum}%)
                 </span>
               </div>
               <div className="flex justify-between text-slate-500 text-[11px] pt-1 border-t border-slate-200">
@@ -1203,7 +1203,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                   }
                 >
                   {confirmationDialog.calculatedTotal > confirmationDialog.baseTotal ? '+' : ''}
-                  {(confirmationDialog.calculatedTotal - confirmationDialog.baseTotal).toLocaleString()} h
+                  {((confirmationDialog.calculatedTotal ?? 0) - (confirmationDialog.baseTotal ?? 0)).toLocaleString()} h
                 </span>
               </div>
             </div>
@@ -1211,11 +1211,11 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
             <p className="text-xs text-slate-600">
               Deseja atualizar o valor padrão das Horas Típicas do modelo para{' '}
               <strong className="text-slate-900">
-                {confirmationDialog.calculatedTotal.toLocaleString()} h
+                {(confirmationDialog.calculatedTotal ?? 0).toLocaleString()} h
               </strong>{' '}
               ou manter a meta original de{' '}
               <strong className="text-slate-900">
-                {confirmationDialog.baseTotal.toLocaleString()} h
+                {(confirmationDialog.baseTotal ?? 0).toLocaleString()} h
               </strong>
               ?
             </p>
@@ -1227,7 +1227,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                 className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
               >
                 <Check className="w-4 h-4" />
-                <span>Atualizar Meta para {confirmationDialog.calculatedTotal.toLocaleString()}h e Salvar</span>
+                <span>Atualizar Meta para {(confirmationDialog.calculatedTotal ?? 0).toLocaleString()}h e Salvar</span>
               </button>
 
               <button
@@ -1235,7 +1235,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                 onClick={handleConfirmSaveKeepOriginalBase}
                 className="w-full py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer border border-slate-300"
               >
-                <span>Manter Meta em {confirmationDialog.baseTotal.toLocaleString()}h e Salvar</span>
+                <span>Manter Meta em {(confirmationDialog.baseTotal ?? 0).toLocaleString()}h e Salvar</span>
               </button>
 
               <button

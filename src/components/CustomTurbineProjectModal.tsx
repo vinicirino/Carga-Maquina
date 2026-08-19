@@ -527,7 +527,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
                     >
                       {turbineTypes.map((t) => (
                         <option key={t.id} value={t.id}>
-                          {t.name} ({t.defaultHoursPerTurbine.toLocaleString()}h)
+                          {t.name} ({(t.defaultHoursPerTurbine ?? 0).toLocaleString()}h)
                         </option>
                       ))}
                     </select>
@@ -837,7 +837,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
                               <span className="text-slate-400">({s.percentage}%)</span>
                             </div>
                             <div className="font-mono text-[9px] text-slate-300">
-                              <span className="text-emerald-400 font-bold">{s.hours.toLocaleString()} h</span>
+                              <span className="text-emerald-400 font-bold">{(s.hours ?? 0).toLocaleString()} h</span>
                               <span className="text-slate-500 ml-1">
                                 ({s.startDate} a {s.endDate})
                               </span>
@@ -851,7 +851,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
             </div>
 
             <div className="text-[10px] text-slate-500 font-medium italic pt-1">
-              * O cálculo da Curva S distribui as {totalHoursInput.toLocaleString()}h com base na duração e início de cada setor.
+              * O cálculo da Curva S distribui as {(totalHoursInput ?? 0).toLocaleString()}h com base na duração e início de cada setor.
             </div>
           </div>
 
@@ -943,9 +943,9 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
             <span className="hidden sm:inline">
               Projeto: <strong className="text-white">{projectName}</strong> | Carga Total:{' '}
               <strong className="text-emerald-400">
-                {calculationResult.totalHours.toLocaleString()}h
+                {(calculationResult?.totalHours ?? 0).toLocaleString()}h
               </strong>{' '}
-              ({calculationResult.durationDays} dias)
+              ({calculationResult?.durationDays ?? 0} dias)
             </span>
           </div>
 

@@ -430,7 +430,7 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
                         <div className="bg-white/80 border border-emerald-200 rounded-lg p-2 text-center">
                           <div className="text-xs text-slate-500 font-medium">Carga Total</div>
                           <div className="text-xs font-bold text-slate-800 mt-1">
-                            {parseResult.stats.totalHours.toLocaleString()}h
+                            {(parseResult?.stats?.totalHours || 0).toLocaleString()}h
                           </div>
                         </div>
                       </div>

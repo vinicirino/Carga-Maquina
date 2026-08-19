@@ -488,7 +488,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                         {parsedData.totalProjects} Projetos Detectados com Sucesso!
                       </div>
                       <div className="text-xs text-emerald-800">
-                        {parsedData.totalColumns} Recursos/Centros de Trabalho • {Math.round(parsedData.totalHoursSum).toLocaleString('pt-BR')} horas totais
+                        {parsedData.totalColumns} Recursos/Centros de Trabalho • {Math.round(parsedData?.totalHoursSum || 0).toLocaleString('pt-BR')} horas totais
                       </div>
                     </div>
                   </div>
@@ -661,7 +661,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                               />
                             </td>
                             <td className="py-2 px-3 text-right font-black text-indigo-700">
-                              {Math.round(p.totalHours).toLocaleString('pt-BR')} h
+                              {Math.round(p.totalHours || 0).toLocaleString('pt-BR')} h
                             </td>
                           </tr>
                         ))}
@@ -766,7 +766,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
 
                             {/* Total Hours */}
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-700">
-                              {Math.round(mapping.totalHoursInColumn).toLocaleString('pt-BR')} h
+                              {Math.round(mapping.totalHoursInColumn || 0).toLocaleString('pt-BR')} h
                             </td>
 
                             {/* Action Selector */}
@@ -906,7 +906,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                     Total de Horas
                   </span>
                   <div className="text-2xl font-black text-emerald-700 mt-1">
-                    {Math.round(parsedData.totalHoursSum).toLocaleString('pt-BR')} h
+                    {Math.round(parsedData?.totalHoursSum || 0).toLocaleString('pt-BR')} h
                   </div>
                 </div>
               </div>

@@ -417,28 +417,30 @@ export default function App() {
         : DEFAULT_SECTOR_GROUPS;
 
     if (mode === 'new_scenario') {
+      const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
       const newScen: PlanningScenario = {
         id: `scen-${Date.now()}`,
         name: scenarioName || 'Cenário Importado Planilha',
-        description: `Importado em ${new Date().toLocaleDateString('pt-BR')} via Matriz CSV/Excel (${newProjects.length} projetos)`,
+        description: `Importado em ${new Date().toLocaleDateString('pt-BR')} via Matriz CSV/Excel (${sanitizedProjects.length} projetos)`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         workCenters: newWcs,
-        projects: newProjects,
+        projects: sanitizedProjects,
         sectorGroups: validatedGroups,
       };
       setScenarios((prev) => [...prev, newScen]);
       setActiveScenarioId(newScen.id);
       setWorkCenters(newWcs);
-      setProjects(newProjects);
+      setProjects(sanitizedProjects);
       setSectorGroups(validatedGroups);
       setActiveTab('projects');
       return;
     }
 
     if (mode === 'replace_projects') {
+      const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
       setWorkCenters(newWcs);
-      setProjects(newProjects);
+      setProjects(sanitizedProjects);
       setSectorGroups(validatedGroups);
       setScenarios((prev) =>
         prev.map((s) =>
@@ -446,7 +448,7 @@ export default function App() {
             ? {
                 ...s,
                 workCenters: newWcs,
-                projects: newProjects,
+                projects: sanitizedProjects,
                 sectorGroups: validatedGroups,
                 updatedAt: new Date().toISOString(),
               }
@@ -457,8 +459,19 @@ export default function App() {
       return;
     }
 
-    // Default mode: 'append' (add new projects to existing ones)
-    const mergedProjects = [...projects, ...newProjects];
+    // Default mode: 'append' (replace existing projects with same name to prevent duplicates, or append new ones)
+    const sanitizedNewProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
+    const projectMap = new Map<string, Project>();
+    // Existing projects
+    projects.forEach((p) => {
+      projectMap.set(p.name.trim().toUpperCase(), sanitizeProjectSchedules(p, newWcs));
+    });
+    // Overwrite / Add imported projects (unique by project name)
+    sanitizedNewProjects.forEach((p) => {
+      projectMap.set(p.name.trim().toUpperCase(), p);
+    });
+    const mergedProjects = Array.from(projectMap.values());
+
     setWorkCenters(newWcs);
     setProjects(mergedProjects);
     setSectorGroups(validatedGroups);

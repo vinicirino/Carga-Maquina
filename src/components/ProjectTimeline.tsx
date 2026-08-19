@@ -239,7 +239,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
             Editor de Parâmetros & Curva S (Visualização Personalizada)
           </span>
           <span className="text-[10px] text-slate-400 font-mono">
-            Total: <strong className="text-emerald-400">{calculationResult.totalHours.toLocaleString()}h</strong> ({calculationResult.durationDays} dias)
+            Total: <strong className="text-emerald-400">{(calculationResult?.totalHours ?? 0).toLocaleString()}h</strong> ({calculationResult?.durationDays ?? 0} dias)
           </span>
         </div>
 
@@ -434,7 +434,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
                             <span className="text-slate-400">({s.percentage}%)</span>
                           </div>
                           <div className="font-mono text-[9px] text-slate-300">
-                            <span className="text-emerald-400 font-bold">{s.hours.toLocaleString()} h</span>
+                            <span className="text-emerald-400 font-bold">{(s.hours ?? 0).toLocaleString()} h</span>
                             <span className="text-slate-500 ml-1">
                               ({s.startDate} a {s.endDate})
                             </span>
@@ -542,35 +542,6 @@ export const ProjectTimeline: React.FC<ProjectTimelineProps> = ({
 
   const toggleExpand = (id: string) => {
     setExpandedProjectId((prev) => (prev === id ? null : id));
-  };
-
-  const handleDateChange = (
-    project: Project,
-    field: 'startDate' | 'endDate',
-    value: string
-  ) => {
-    if (!value) return;
-
-    let newStart = field === 'startDate' ? value : project.startDate;
-    let newEnd = field === 'endDate' ? value : project.endDate;
-
-    // Ensure start is not after end
-    if (newStart > newEnd) {
-      if (field === 'startDate') {
-        newEnd = newStart;
-      } else {
-        newStart = newEnd;
-      }
-    }
-
-    const updatedProject: Project = {
-      ...project,
-      startDate: newStart,
-      endDate: newEnd,
-    };
-
-    const sanitized = sanitizeProjectSchedules(updatedProject);
-    onUpdateProject(sanitized);
   };
 
   const handleToggleEnabled = (project: Project) => {
@@ -709,28 +680,25 @@ export const ProjectTimeline: React.FC<ProjectTimelineProps> = ({
 
                 {/* Right: Dates, duration, total hours, action buttons */}
                 <div className="flex flex-wrap items-center gap-3 lg:gap-4 shrink-0">
-                  {/* Quick Dates Selector */}
-                  <div className="flex items-center gap-1.5 bg-slate-50 p-1.5 rounded-lg border border-slate-200 text-xs">
-                    <div className="flex items-center gap-1">
+                  {/* Read-Only Dates Display */}
+                  <div
+                    onClick={() => setModalEditProject(project)}
+                    className="flex items-center gap-2 bg-slate-50 hover:bg-indigo-50/60 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 text-xs transition-colors cursor-pointer group shadow-2xs"
+                    title="Datas do Projeto. Clique em 'Editar' para alterar no modal completo"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <div className="flex items-center gap-1.5 font-medium text-slate-700">
                       <span className="text-[11px] font-bold text-slate-500">Início:</span>
-                      <input
-                        type="date"
-                        value={project.startDate}
-                        onChange={(e) => handleDateChange(project, 'startDate', e.target.value)}
-                        className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
-                      />
-                    </div>
+                      <span className="font-bold text-slate-900 font-mono">
+                        {formatDateDisplay(project.startDate)}
+                      </span>
 
-                    <span className="text-slate-400 font-bold">à</span>
+                      <span className="text-slate-400 font-bold px-0.5">à</span>
 
-                    <div className="flex items-center gap-1">
                       <span className="text-[11px] font-bold text-slate-500">Término:</span>
-                      <input
-                        type="date"
-                        value={project.endDate}
-                        onChange={(e) => handleDateChange(project, 'endDate', e.target.value)}
-                        className="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-xs font-bold text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
-                      />
+                      <span className="font-bold text-slate-900 font-mono">
+                        {formatDateDisplay(project.endDate)}
+                      </span>
                     </div>
                   </div>
 

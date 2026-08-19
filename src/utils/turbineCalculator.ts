@@ -209,10 +209,7 @@ export function calculateTurbineProject(
 
         const wcAllocatedHours = Math.round(sectorTotalHours * share);
 
-        workCenterHours[wc.name] = wcAllocatedHours;
         workCenterHours[wc.id] = wcAllocatedHours;
-
-        workCenterDates[wc.name] = { startDate: sectorStartStr, endDate: sectorEndStr };
         workCenterDates[wc.id] = { startDate: sectorStartStr, endDate: sectorEndStr };
 
         wcItems.push({

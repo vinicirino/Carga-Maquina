@@ -422,17 +422,12 @@ export function compileMatrixImport(
   for (let idx = 0; idx < parsedData.projectRows.length; idx++) {
     const pRow = parsedData.projectRows[idx];
 
-    // Build workCenterHours mapped to actual work center IDs and Names
+    // Build workCenterHours strictly mapped to unique work center IDs (one entry per center)
     const finalWcHours: Record<string, number> = {};
     for (const [rawHeader, hours] of Object.entries(pRow.workCenterHours)) {
       const targetWcId = headerToWcIdMap[rawHeader];
       if (targetWcId && hours > 0) {
         finalWcHours[targetWcId] = (finalWcHours[targetWcId] || 0) + hours;
-        // Also map by name for backward compatibility
-        const foundWc = finalWorkCenters.find((w) => w.id === targetWcId);
-        if (foundWc) {
-          finalWcHours[foundWc.name] = (finalWcHours[foundWc.name] || 0) + hours;
-        }
       }
     }
 

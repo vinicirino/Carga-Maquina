@@ -43,7 +43,7 @@ export const KPIs: React.FC<KPIsProps> = ({
         </div>
         <div>
           <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {kpis.totalRequiredHours.toLocaleString('pt-BR', {
+            {(kpis?.totalRequiredHours || 0).toLocaleString('pt-BR', {
               maximumFractionDigits: 1,
             })} <span className="text-sm font-medium text-slate-500">h</span>
           </div>
@@ -63,7 +63,7 @@ export const KPIs: React.FC<KPIsProps> = ({
         </div>
         <div>
           <div className="text-2xl font-black text-slate-900 tracking-tight">
-            {kpis.totalWeeklyCapacity.toLocaleString('pt-BR', {
+            {(kpis?.totalWeeklyCapacity || 0).toLocaleString('pt-BR', {
               maximumFractionDigits: 1,
             })} <span className="text-xs font-medium text-slate-500">h/sem</span>
           </div>
@@ -84,7 +84,7 @@ export const KPIs: React.FC<KPIsProps> = ({
         <div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-slate-900 tracking-tight">
-              {kpis.overallUtilizationPercentage.toFixed(1)}%
+              {(kpis?.overallUtilizationPercentage || 0).toFixed(1)}%
             </span>
             <span
               className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full ${

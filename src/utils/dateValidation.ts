@@ -1,4 +1,65 @@
-import { Project } from '../types';
+import { Project, WorkCenter } from '../types';
+
+/**
+ * Deduplicates workCenterHours in case both ID and Name were stored for the same work center,
+ * or removes invalid zero/null entries.
+ */
+export function deduplicateProjectWorkCenterHours(
+  project: Project,
+  workCenters?: WorkCenter[]
+): Project {
+  if (!project.workCenterHours) return project;
+
+  const rawEntries = Object.entries(project.workCenterHours);
+  if (rawEntries.length === 0) return project;
+
+  const cleanHours: Record<string, number> = {};
+  const seenWcIds = new Set<string>();
+
+  if (workCenters && workCenters.length > 0) {
+    // 1. Pass 1: IDs
+    for (const [key, hours] of rawEntries) {
+      if (hours === undefined || hours === null || isNaN(hours) || hours <= 0) continue;
+      const wcById = workCenters.find((w) => w.id === key);
+      if (wcById) {
+        cleanHours[wcById.id] = (cleanHours[wcById.id] || 0) + hours;
+        seenWcIds.add(wcById.id);
+      }
+    }
+
+    // 2. Pass 2: Names (only add if the work center ID wasn't already mapped)
+    for (const [key, hours] of rawEntries) {
+      if (hours === undefined || hours === null || isNaN(hours) || hours <= 0) continue;
+      const wcById = workCenters.find((w) => w.id === key);
+      if (wcById) continue; // Handled in pass 1
+
+      const wcByName = workCenters.find(
+        (w) => w.name.trim().toUpperCase() === key.trim().toUpperCase()
+      );
+      if (wcByName) {
+        if (!seenWcIds.has(wcByName.id)) {
+          cleanHours[wcByName.id] = hours;
+          seenWcIds.add(wcByName.id);
+        }
+        // If seenWcIds already has wcByName.id, it was a duplicate key! We omit it.
+      } else {
+        cleanHours[key] = hours;
+      }
+    }
+  } else {
+    // Without workCenters list, simply copy valid entries
+    for (const [key, hours] of rawEntries) {
+      if (hours !== undefined && hours !== null && !isNaN(hours) && hours > 0) {
+        cleanHours[key] = hours;
+      }
+    }
+  }
+
+  return {
+    ...project,
+    workCenterHours: cleanHours,
+  };
+}
 
 /**
  * Clamps a given date string (YYYY-MM-DD) between minDate and maxDate.
@@ -45,7 +106,7 @@ export function clampDateRangeWithinProject(
  * Sanitizes all sub-schedules (groupDates and workCenterDates) within a project,
  * guaranteeing none of them fall outside the global project start and end dates.
  */
-export function sanitizeProjectSchedules(project: Project): Project {
+export function sanitizeProjectSchedules(project: Project, workCenters?: WorkCenter[]): Project {
   const pStart = project.startDate;
   const pEnd = project.endDate < project.startDate ? project.startDate : project.endDate;
 
@@ -73,11 +134,13 @@ export function sanitizeProjectSchedules(project: Project): Project {
     }
   }
 
-  return {
+  const baseProject = {
     ...project,
     startDate: pStart,
     endDate: pEnd,
     groupDates: sanitizedGroupDates,
     workCenterDates: sanitizedWcDates,
   };
+
+  return deduplicateProjectWorkCenterHours(baseProject, workCenters);
 }

@@ -160,7 +160,7 @@ export const ScenarioComparisonModal: React.FC<ScenarioComparisonModalProps> = (
                           Carga Total (h)
                         </span>
                         <span className="text-xs font-extrabold text-slate-800">
-                          {kpis.totalDemandedHours.toLocaleString()}h
+                          {(kpis?.totalDemandedHours || 0).toLocaleString()}h
                         </span>
                       </div>
 

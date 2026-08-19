@@ -256,7 +256,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               </h2>
             </div>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Demanda semanal acumulada de todos os projetos vs. capacidade nominal total da fábrica ({kpis.totalWeeklyCapacity.toLocaleString('pt-BR')}h/sem)
+              Demanda semanal acumulada de todos os projetos vs. capacidade nominal total da fábrica ({(kpis?.totalWeeklyCapacity ?? 0).toLocaleString('pt-BR')}h/sem)
             </p>
           </div>
 
@@ -315,16 +315,16 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                         <div className="space-y-1 text-slate-300">
                           <div className="flex justify-between gap-4">
                             <span>Demanda Total:</span>
-                            <strong className="text-white">{totalHours.toLocaleString()}h</strong>
+                            <strong className="text-white">{(totalHours || 0).toLocaleString()}h</strong>
                           </div>
                           <div className="flex justify-between gap-4">
                             <span>Capacidade Fabril:</span>
-                            <strong className="text-slate-300">{cap.toLocaleString()}h</strong>
+                            <strong className="text-slate-300">{(cap || 0).toLocaleString()}h</strong>
                           </div>
                           {isOver && (
                             <div className="text-rose-300 text-[11px] font-semibold pt-1 border-t border-slate-800 flex items-center gap-1">
                               <AlertTriangle className="w-3 h-3 text-rose-400" />
-                              <span>Sobrecarga de +{(totalHours - cap).toLocaleString()}h</span>
+                              <span>Sobrecarga de +{((totalHours || 0) - (cap || 0)).toLocaleString()}h</span>
                             </div>
                           )}
                         </div>
@@ -432,11 +432,11 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 <div className="space-y-1.5 bg-white p-2.5 rounded-lg border border-slate-200 text-xs">
                   <div className="flex justify-between text-slate-600">
                     <span>Capacidade Semanal:</span>
-                    <strong className="text-slate-900">{sector.weeklyCapacity.toLocaleString()}h/sem</strong>
+                    <strong className="text-slate-900">{(sector.weeklyCapacity || 0).toLocaleString()}h/sem</strong>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Demanda Total:</span>
-                    <strong className="text-indigo-700">{Math.round(sector.totalRequiredHours).toLocaleString()}h</strong>
+                    <strong className="text-indigo-700">{Math.round(sector.totalRequiredHours || 0).toLocaleString()}h</strong>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span>Pico de Ocupação:</span>
@@ -596,7 +596,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
                   <div className="text-right shrink-0">
                     <div className="text-xs font-black text-slate-900">
-                      {projectTotalHours.toLocaleString()}h
+                      {(projectTotalHours || 0).toLocaleString()}h
                     </div>
                     <div className="text-[10px] text-slate-500 font-medium">
                       {pctOfPlant}% da carga fabril

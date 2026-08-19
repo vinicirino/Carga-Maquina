@@ -296,7 +296,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
           {/* Read-Only Hours Display */}
           <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
             <span className="font-black text-xs text-emerald-700">
-              {Math.round(calculatedHours).toLocaleString()}
+              {Math.round(calculatedHours || 0).toLocaleString()}
             </span>
             <span className="text-xs font-bold text-emerald-700 ml-1">h</span>
           </div>
@@ -341,7 +341,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
                 <span>Distribuição entre Centros ({sectorName})</span>
               </div>
               <span className="text-[10px] text-slate-600 font-medium">
-                Carga do setor: <strong className="text-emerald-700">{Math.round(calculatedHours).toLocaleString()}h</strong>
+                Carga do setor: <strong className="text-emerald-700">{Math.round(calculatedHours || 0).toLocaleString()}h</strong>
               </span>
             </div>
 
@@ -387,7 +387,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
                         {wc.name}
                       </span>
                       <span className="text-[10px] text-slate-500 font-mono">
-                        Cap: {cap}h/sem • Alocado: <strong className="text-emerald-700">{allocatedHours.toLocaleString()}h</strong>
+                        Cap: {cap}h/sem • Alocado: <strong className="text-emerald-700">{(allocatedHours || 0).toLocaleString()}h</strong>
                       </span>
                     </div>
 
