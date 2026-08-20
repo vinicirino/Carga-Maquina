@@ -592,6 +592,7 @@ export default function App() {
             initialSectorFilter={targetSectorFilter}
             initialWcId={targetWcId}
             onUpdateWorkCenter={handleUpdateWorkCenter}
+            onUpdateProject={handleUpdateProject}
             onSelectWorkCenterForSimulation={() => setActiveTab('simulation')}
           />
         )}
