@@ -30,6 +30,7 @@ import {
   TurbineCalculationResult,
 } from '../utils/turbineCalculator';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
+import { getProjectTotalHours } from '../utils/dateValidation';
 import { VolumeDialControl } from './VolumeDialControl';
 import { TurbineTypeManagerModal } from './TurbineTypeManagerModal';
 import {
@@ -130,24 +131,24 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
     Record<string, SectorCurveConfig>
   >({});
 
-  // Active Sector Groups
+  // Active Sector Groups strictly from registered work centers
   const allKnownSectorGroups = useMemo(() => {
     const set = new Set<string>();
-    DEFAULT_SECTOR_GROUPS.forEach((s) => set.add(s.trim().toUpperCase()));
-    sectorGroups.forEach((s) => {
-      if (s && s.trim()) set.add(s.trim().toUpperCase());
-    });
     workCenters.forEach((wc) => {
       const cat = getWorkCenterCategory(wc);
       if (cat && cat.trim()) set.add(cat.trim().toUpperCase());
     });
-    if (selectedTurbine?.sectorCurves) {
-      Object.keys(selectedTurbine.sectorCurves).forEach((k) => {
-        if (k && k.trim()) set.add(k.trim().toUpperCase());
-      });
+    if (set.size === 0) {
+      if (sectorGroups && sectorGroups.length > 0) {
+        sectorGroups.forEach((s) => {
+          if (s && s.trim()) set.add(s.trim().toUpperCase());
+        });
+      } else {
+        DEFAULT_SECTOR_GROUPS.forEach((s) => set.add(s.trim().toUpperCase()));
+      }
     }
     return Array.from(set);
-  }, [sectorGroups, workCenters, selectedTurbine]);
+  }, [workCenters, sectorGroups]);
 
   // Populate state when projectToEdit changes or modal opens
   useEffect(() => {
@@ -168,11 +169,8 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
           setCustomSectorCurves(JSON.parse(JSON.stringify(cfg.customSectorCurves)));
         }
       } else {
-        // Calculate total hours from workCenterHours
-        const sumHours = Object.values(projectToEdit.workCenterHours || {}).reduce<number>(
-          (acc, h) => acc + (Number(h) || 0),
-          0
-        );
+        // Calculate total hours from workCenterHours with strict deduplication
+        const sumHours = getProjectTotalHours(projectToEdit, workCenters);
         const hrs = sumHours > 0 ? sumHours : 10000;
         setHoursPerTurbine(hrs);
         setTotalHoursInput(hrs);

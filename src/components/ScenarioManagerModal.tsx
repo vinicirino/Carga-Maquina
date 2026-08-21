@@ -24,6 +24,7 @@ interface ScenarioManagerModalProps {
   onSetBaselineScenario: (id: string) => void;
   onDuplicateScenario: (id: string) => void;
   onDeleteScenario: (id: string) => void;
+  onSaveCurrentAsPrimaryBaseline?: () => void;
 }
 
 export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
@@ -36,6 +37,7 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
   onSetBaselineScenario,
   onDuplicateScenario,
   onDeleteScenario,
+  onSaveCurrentAsPrimaryBaseline,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -243,7 +245,21 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end shrink-0">
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
+          <div>
+            {onSaveCurrentAsPrimaryBaseline && (
+              <button
+                onClick={() => {
+                  onSaveCurrentAsPrimaryBaseline();
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
+                title="Salva os dados do cenário ativo como a Base Primária Oficial (Baseline) do PCP"
+              >
+                <Star className="w-4 h-4 fill-white text-white" />
+                <span>Salvar Atual como Base Primária Oficial</span>
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg cursor-pointer"

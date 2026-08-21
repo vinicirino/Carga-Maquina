@@ -266,6 +266,52 @@ export default function App() {
     );
   };
 
+  const handleSaveAsPrimaryBaseline = () => {
+    // 1. Synchronize current state to active scenario
+    const updatedScenarios = scenarios.map((scen) => {
+      if (scen.id === activeScenarioId) {
+        return {
+          ...scen,
+          isBaseline: true,
+          workCenters: JSON.parse(JSON.stringify(workCenters)),
+          projects: JSON.parse(JSON.stringify(projects)),
+          sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return {
+        ...scen,
+        isBaseline: false,
+      };
+    });
+
+    setScenarios(updatedScenarios);
+
+    // 2. Persist to primary baseline storage keys
+    try {
+      localStorage.setItem(STORAGE_KEY_SCENARIOS, JSON.stringify(updatedScenarios));
+      localStorage.setItem(STORAGE_KEY_ACTIVE_SCENARIO_ID, activeScenarioId);
+      localStorage.setItem(STORAGE_KEY_WORKCENTERS, JSON.stringify(workCenters));
+      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+      localStorage.setItem(STORAGE_KEY_SECTOR_GROUPS, JSON.stringify(sectorGroups));
+      localStorage.setItem(
+        'carga_maquina_primary_baseline_v1',
+        JSON.stringify({
+          savedAt: new Date().toISOString(),
+          activeScenarioId,
+          workCenters,
+          projects,
+          sectorGroups,
+          scenarios: updatedScenarios,
+        })
+      );
+    } catch (e) {
+      console.error('Error saving primary baseline:', e);
+    }
+
+    alert('✅ As informações desta base foram salvas com sucesso como a Base Primária Oficial (Baseline do PCP)!');
+  };
+
   const handleDeleteScenario = (id: string) => {
     if (scenarios.length <= 1) {
       alert('É necessário manter pelo menos um cenário no sistema.');
@@ -323,7 +369,7 @@ export default function App() {
   };
 
   const handleUpdateProject = (updated: Project) => {
-    const cleanProject = sanitizeProjectSchedules(updated);
+    const cleanProject = sanitizeProjectSchedules(updated, workCenters);
     setProjects((prev) =>
       prev.map((p) => (p.id === cleanProject.id ? cleanProject : p))
     );
@@ -334,7 +380,7 @@ export default function App() {
   };
 
   const handleAddProject = (newProject: Project) => {
-    const cleanProject = sanitizeProjectSchedules(newProject);
+    const cleanProject = sanitizeProjectSchedules(newProject, workCenters);
     setProjects((prev) => [...prev, cleanProject]);
   };
 
@@ -492,6 +538,32 @@ export default function App() {
   };
 
   const handleResetData = () => {
+    try {
+      const savedPrimaryBaseline = localStorage.getItem('carga_maquina_primary_baseline_v1');
+      if (savedPrimaryBaseline) {
+        const parsed = JSON.parse(savedPrimaryBaseline);
+        if (parsed && parsed.scenarios && parsed.scenarios.length > 0) {
+          if (
+            window.confirm(
+              'Deseja restaurar para a sua Base Primária Oficial salva?\n(Clique em "Cancelar" se desejar restaurar para os dados padrão originais de fábrica)'
+            )
+          ) {
+            setScenarios(parsed.scenarios);
+            const targetId = parsed.activeScenarioId || parsed.scenarios[0].id;
+            setActiveScenarioId(targetId);
+            const target = parsed.scenarios.find((s: any) => s.id === targetId) || parsed.scenarios[0];
+            setWorkCenters(target.workCenters);
+            setProjects(target.projects);
+            setSectorGroups(target.sectorGroups || DEFAULT_SECTOR_GROUPS);
+            alert('✅ Dados restaurados para a sua Base Primária Oficial!');
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error loading baseline', e);
+    }
+
     if (
       window.confirm(
         'Deseja restaurar os cenários padrão de fábrica com os dados originais?'
@@ -548,6 +620,7 @@ export default function App() {
         onOpenNewProjectModal={() => setIsNewProjectModalOpen(true)}
         onOpenTurbineProjectModal={() => setIsTurbineProjectModalOpen(true)}
         onResetData={handleResetData}
+        onSaveAsBaseline={handleSaveAsPrimaryBaseline}
         overloadCount={kpis.overloadedWorkCentersCount}
         scenarios={scenarios}
         activeScenarioId={activeScenarioId}
@@ -672,9 +745,12 @@ export default function App() {
         onClose={() => setIsWcModalOpen(false)}
         workCenters={workCenters}
         sectorGroups={sectorGroups}
+        turbineTypes={turbineTypes}
+        projects={projects}
         onAddSectorGroup={handleAddSectorGroup}
         onDeleteSectorGroup={handleDeleteSectorGroup}
         onSaveWorkCenters={setWorkCenters}
+        onUpdateTurbineTypes={handleSaveTurbineTypes}
       />
 
       <TurbineTypeManagerModal
@@ -720,6 +796,7 @@ export default function App() {
         onSetBaselineScenario={handleSetBaselineScenario}
         onDuplicateScenario={handleDuplicateScenario}
         onDeleteScenario={handleDeleteScenario}
+        onSaveCurrentAsPrimaryBaseline={handleSaveAsPrimaryBaseline}
       />
 
       <ScenarioComparisonModal

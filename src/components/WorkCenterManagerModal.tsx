@@ -1,16 +1,52 @@
 import React, { useState } from 'react';
-import { WorkCenter } from '../types';
+import { WorkCenter, Project } from '../types';
+import { TurbineType, SectorCurveConfig } from '../types/turbine';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
-import { X, Plus, Trash2, Factory, Save, FolderTree, Tag, Filter, Layers, CheckCircle } from 'lucide-react';
+import {
+  X,
+  Plus,
+  Trash2,
+  Factory,
+  Save,
+  FolderTree,
+  Tag,
+  Filter,
+  Layers,
+  CheckCircle,
+  Power,
+  ToggleLeft,
+  ToggleRight,
+  Check,
+  Ban,
+  AlertTriangle,
+  Flame,
+  TrendingUp,
+} from 'lucide-react';
+
+export interface SCurveLinkDetail {
+  modelId: string;
+  modelName: string;
+  sectorName: string;
+  detail: string;
+}
+
+export interface ProjectLinkDetail {
+  projectId: string;
+  projectName: string;
+  hours: number;
+}
 
 interface WorkCenterManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   workCenters: WorkCenter[];
   sectorGroups: string[];
+  turbineTypes?: TurbineType[];
+  projects?: Project[];
   onAddSectorGroup: (name: string) => void;
   onDeleteSectorGroup: (name: string) => void;
   onSaveWorkCenters: (wcs: WorkCenter[]) => void;
+  onUpdateTurbineTypes?: (types: TurbineType[]) => void;
 }
 
 export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
@@ -18,9 +54,12 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
   onClose,
   workCenters,
   sectorGroups,
+  turbineTypes = [],
+  projects = [],
   onAddSectorGroup,
   onDeleteSectorGroup,
   onSaveWorkCenters,
+  onUpdateTurbineTypes,
 }) => {
   const [list, setList] = useState<WorkCenter[]>(workCenters);
   const [newGroupInput, setNewGroupInput] = useState('');
@@ -29,6 +68,14 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     sectorGroups.length > 0 ? sectorGroups[0] : 'CORTE'
   );
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('ALL');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+
+  // Confirmation Alert Dialog when deleting a work center linked to S-Curve / Projects
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    wc: WorkCenter;
+    linkedTurbines: SCurveLinkDetail[];
+    linkedProjects: ProjectLinkDetail[];
+  } | null>(null);
 
   if (!isOpen) return null;
 
@@ -48,11 +95,130 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     );
   };
 
+  const handleToggleEnabled = (id: string) => {
+    setList((prev) =>
+      prev.map((wc) =>
+        wc.id === id ? { ...wc, enabled: wc.enabled === false ? true : false } : wc
+      )
+    );
+  };
+
+  // Helper to detect all links between a work center and the S-Curve models / Projects
+  const getSCurveLinks = (wc: WorkCenter) => {
+    const linkedTurbines: SCurveLinkDetail[] = [];
+    const linkedProjects: ProjectLinkDetail[] = [];
+    const wcCat = getWorkCenterCategory(wc);
+
+    // 1. Scan Turbine Types / S-Curve Models
+    turbineTypes.forEach((t) => {
+      if (!t.sectorCurves) return;
+      Object.entries(t.sectorCurves).forEach(([secName, rawCfg]) => {
+        const sc = rawCfg as SectorCurveConfig;
+        if (!sc) return;
+        const shares = sc.customWorkCenterShares;
+        const hasCustomShare =
+          shares && (shares[wc.id] !== undefined || shares[wc.name] !== undefined);
+        const isSectorMatch =
+          secName.trim().toUpperCase() === wcCat && (sc.percentage || 0) > 0;
+
+        if (hasCustomShare) {
+          const shareVal = shares[wc.id] ?? shares[wc.name];
+          linkedTurbines.push({
+            modelId: t.id,
+            modelName: t.name,
+            sectorName: secName,
+            detail: `Rateio customizado de ${shareVal}% no setor ${secName}`,
+          });
+        } else if (isSectorMatch) {
+          linkedTurbines.push({
+            modelId: t.id,
+            modelName: t.name,
+            sectorName: secName,
+            detail: `Alocado no agrupador ${secName} (${sc.percentage}% da curva total)`,
+          });
+        }
+      });
+    });
+
+    // 2. Scan Projects with Turbine S-Curve Configuration
+    projects.forEach((p) => {
+      const hours =
+        p.workCenterHours?.[wc.name] ||
+        (p.workCenterHours as any)?.[wc.id] ||
+        0;
+      if (hours > 0 || (p.turbineConfig && p.turbineConfig.hoursPerTurbine > 0)) {
+        if (hours > 0) {
+          linkedProjects.push({
+            projectId: p.id,
+            projectName: p.name,
+            hours,
+          });
+        }
+      }
+    });
+
+    return { linkedTurbines, linkedProjects };
+  };
+
   const handleDelete = (id: string, e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation();
     }
-    setList((prev) => prev.filter((wc) => wc.id !== id));
+    const wc = list.find((w) => w.id === id);
+    if (!wc) return;
+
+    const { linkedTurbines, linkedProjects } = getSCurveLinks(wc);
+
+    if (linkedTurbines.length > 0 || linkedProjects.length > 0) {
+      setDeleteConfirmation({
+        wc,
+        linkedTurbines,
+        linkedProjects,
+      });
+      return;
+    }
+
+    // Direct deletion if no links
+    setList((prev) => prev.filter((w) => w.id !== id));
+  };
+
+  const handleConfirmDeleteWithSCurveUpdate = () => {
+    if (!deleteConfirmation) return;
+    const { wc } = deleteConfirmation;
+
+    // 1. Remove from work centers list
+    setList((prev) => prev.filter((w) => w.id !== wc.id));
+
+    // 2. Clean up customWorkCenterShares from turbine types if callback exists
+    if (onUpdateTurbineTypes && turbineTypes.length > 0) {
+      const updatedTurbineTypes = turbineTypes.map((t) => {
+        if (!t.sectorCurves) return t;
+        let changed = false;
+        const updatedCurves: Record<string, SectorCurveConfig> = { ...t.sectorCurves };
+
+        Object.entries(updatedCurves).forEach(([secKey, rawSecCfg]) => {
+          const secCfg = rawSecCfg as SectorCurveConfig;
+          if (secCfg && secCfg.customWorkCenterShares) {
+            const shares = { ...secCfg.customWorkCenterShares };
+            if (shares[wc.id] !== undefined || shares[wc.name] !== undefined) {
+              delete shares[wc.id];
+              delete shares[wc.name];
+              changed = true;
+              updatedCurves[secKey] = {
+                ...secCfg,
+                customWorkCenterShares: Object.keys(shares).length > 0 ? shares : undefined,
+              };
+            }
+          }
+        });
+
+        return changed ? { ...t, sectorCurves: updatedCurves } : t;
+      });
+
+      onUpdateTurbineTypes(updatedTurbineTypes);
+    }
+
+    setDeleteConfirmation(null);
   };
 
   const handleAdd = () => {
@@ -66,6 +232,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
       resourcesCount: 1,
       efficiencyPercentage: 100,
       category: cat,
+      enabled: true,
     };
     setList((prev) => [...prev, newWc]);
     setNewWcName('');
@@ -84,23 +251,36 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
   };
 
   const filteredList = list.filter((wc) => {
-    if (selectedGroupFilter === 'ALL') return true;
-    return getWorkCenterCategory(wc) === selectedGroupFilter;
+    if (selectedGroupFilter !== 'ALL' && getWorkCenterCategory(wc) !== selectedGroupFilter) {
+      return false;
+    }
+    if (selectedStatusFilter === 'ACTIVE' && wc.enabled === false) {
+      return false;
+    }
+    if (selectedStatusFilter === 'INACTIVE' && wc.enabled !== false) {
+      return false;
+    }
+    return true;
   });
 
-  const totalWeeklyCapacity = list.reduce((acc, wc) => {
-    return (
-      acc +
-      (wc.dailyHours || 0) *
-        (wc.daysPerWeek || 0) *
-        (wc.resourcesCount || 0) *
-        ((wc.efficiencyPercentage || 0) / 100)
-    );
-  }, 0);
+  const activeCount = list.filter((wc) => wc.enabled !== false).length;
+  const inactiveCount = list.filter((wc) => wc.enabled === false).length;
+
+  const totalWeeklyCapacity = list
+    .filter((wc) => wc.enabled !== false)
+    .reduce((acc, wc) => {
+      return (
+        acc +
+        (wc.dailyHours || 0) *
+          (wc.daysPerWeek || 0) *
+          (wc.resourcesCount || 0) *
+          ((wc.efficiencyPercentage || 0) / 100)
+      );
+    }, 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-2 sm:p-4">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col h-[92vh] max-h-[92vh]">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-7xl 2xl:max-w-[96vw] overflow-hidden flex flex-col h-[94vh] max-h-[94vh]">
         {/* Header */}
         <div className="px-5 py-3.5 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
@@ -253,11 +433,17 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
             {/* Sidebar Summary Footer */}
             <div className="pt-2.5 border-t border-slate-800/80 text-[10px] text-slate-400 space-y-1">
               <div className="flex justify-between">
-                <span>Centros Cadastrados:</span>
-                <strong className="text-white font-mono">{list.length}</strong>
+                <span>Centros Ativos:</span>
+                <strong className="text-emerald-400 font-mono">{activeCount} / {list.length}</strong>
               </div>
+              {inactiveCount > 0 && (
+                <div className="flex justify-between text-slate-400">
+                  <span>Inativos / Desativados:</span>
+                  <strong className="text-rose-400 font-mono">{inactiveCount}</strong>
+                </div>
+              )}
               <div className="flex justify-between">
-                <span>Capacidade Total:</span>
+                <span>Capacidade Ativa:</span>
                 <strong className="text-indigo-300 font-mono">{totalWeeklyCapacity.toFixed(1)}h/sem</strong>
               </div>
             </div>
@@ -316,69 +502,150 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                     <span>
                       Lista de Centros & Parâmetros Operacionais (
                       {selectedGroupFilter === 'ALL'
-                        ? `${list.length} centros no total`
+                        ? `${filteredList.length} de ${list.length} centros`
                         : `${filteredList.length} em ${selectedGroupFilter}`}
                       )
                     </span>
                   </h4>
                   <p className="text-[10px] text-slate-500">
-                    Defina horas por dia, dias de jornada semanal, quantidade de postos/recursos e eficiência.
+                    Ative ou inative recursos (centros inativos têm horas e capacidade zeradas nos gráficos). Ajuste jornadas e postos.
                   </p>
                 </div>
 
-                {/* Filter Table by Group */}
-                <div className="flex items-center gap-2">
-                  <Filter className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-xs font-bold text-slate-600">Filtrar:</span>
-                  <select
-                    value={selectedGroupFilter}
-                    onChange={(e) => setSelectedGroupFilter(e.target.value)}
-                    className="text-xs font-bold px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
-                  >
-                    <option value="ALL">Todos os Agrupadores ({list.length})</option>
-                    {sectorGroups.map((grp) => (
-                      <option key={grp} value={grp}>
-                        {grp}
-                      </option>
-                    ))}
-                  </select>
+                {/* Filters */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Status Filter */}
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStatusFilter('ALL')}
+                      className={`px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        selectedStatusFilter === 'ALL'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Todos ({list.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStatusFilter('ACTIVE')}
+                      className={`px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        selectedStatusFilter === 'ACTIVE'
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'text-emerald-700 hover:text-emerald-900'
+                      }`}
+                    >
+                      Ativos ({activeCount})
+                    </button>
+                    {inactiveCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStatusFilter('INACTIVE')}
+                        className={`px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                          selectedStatusFilter === 'INACTIVE'
+                            ? 'bg-slate-700 text-white shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Inativos ({inactiveCount})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filter Table by Group */}
+                  <div className="flex items-center gap-1.5">
+                    <Filter className="w-3.5 h-3.5 text-slate-400" />
+                    <select
+                      value={selectedGroupFilter}
+                      onChange={(e) => setSelectedGroupFilter(e.target.value)}
+                      className="text-xs font-bold px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      <option value="ALL">Todos os Agrupadores</option>
+                      {sectorGroups.map((grp) => (
+                        <option key={grp} value={grp}>
+                          {grp}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
               {/* Table Container */}
-              <div className="overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl flex-1 max-h-[48vh]">
-                <table className="w-full text-left text-xs">
+              <div className="overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl flex-1 max-h-[52vh]">
+                <table className="w-full text-left text-xs min-w-[840px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider sticky top-0 z-10 border-b border-slate-200">
                     <tr>
-                      <th className="py-2.5 px-3">Centro de Trabalho</th>
-                      <th className="py-2.5 px-2">Agrupador (Setor)</th>
-                      <th className="py-2.5 px-2 text-center">Horas/Dia</th>
-                      <th className="py-2.5 px-2 text-center">Dias/Semana</th>
-                      <th className="py-2.5 px-2 text-center">Nº Recursos</th>
-                      <th className="py-2.5 px-2 text-center">Eficiência %</th>
-                      <th className="py-2.5 px-2 text-right">Cap. Semanal</th>
-                      <th className="py-2.5 px-2 text-center">Ações</th>
+                      <th className="py-2.5 px-2 text-center w-24 shrink-0">Status</th>
+                      <th className="py-2.5 px-4 min-w-[240px] sm:min-w-[300px]">Centro de Trabalho</th>
+                      <th className="py-2.5 px-2 min-w-[140px]">Agrupador (Setor)</th>
+                      <th className="py-2.5 px-2 text-center w-20">Horas/Dia</th>
+                      <th className="py-2.5 px-2 text-center w-20">Dias/Sem</th>
+                      <th className="py-2.5 px-2 text-center w-20">Nº Rec</th>
+                      <th className="py-2.5 px-2 text-center w-20">Efic. %</th>
+                      <th className="py-2.5 px-3 text-right min-w-[90px]">Cap. Semanal</th>
+                      <th className="py-2.5 px-2 text-center w-14">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {filteredList.map((wc) => {
-                      const cap =
-                        (wc.dailyHours || 0) *
-                        (wc.daysPerWeek || 0) *
-                        (wc.resourcesCount || 0) *
-                        ((wc.efficiencyPercentage || 0) / 100);
+                      const isEnabled = wc.enabled !== false;
+                      const cap = isEnabled
+                        ? (wc.dailyHours || 0) *
+                          (wc.daysPerWeek || 0) *
+                          (wc.resourcesCount || 0) *
+                          ((wc.efficiencyPercentage || 0) / 100)
+                        : 0;
 
                       const currentCategory = getWorkCenterCategory(wc);
 
                       return (
-                        <tr key={wc.id} className="hover:bg-indigo-50/30 transition-colors">
-                          <td className="py-2 px-3">
-                            <input
-                              type="text"
-                              value={wc.name}
-                              onChange={(e) => handleUpdate(wc.id, 'name', e.target.value)}
-                              className="w-full font-black text-slate-900 bg-transparent border-b border-transparent focus:border-indigo-500 focus:outline-none text-xs uppercase"
-                            />
+                        <tr
+                          key={wc.id}
+                          className={`transition-colors ${
+                            isEnabled
+                              ? 'hover:bg-indigo-50/30'
+                              : 'bg-slate-100/60 opacity-65 hover:opacity-100'
+                          }`}
+                        >
+                          <td className="py-2 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleEnabled(wc.id)}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-extrabold cursor-pointer transition-all ${
+                                isEnabled
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                                  : 'bg-slate-200 text-slate-600 border border-slate-300 hover:bg-slate-300'
+                              }`}
+                              title={isEnabled ? 'Clique para Inativar este Centro' : 'Clique para Ativar este Centro'}
+                            >
+                              {isEnabled ? (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-700" />
+                                  <span>ATIVO</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Ban className="w-3 h-3 text-slate-500" />
+                                  <span>INATIVO</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+
+                          <td className="py-2 px-4 min-w-[240px] sm:min-w-[300px]">
+                            <div className="flex items-center gap-1.5 w-full">
+                              <input
+                                type="text"
+                                value={wc.name}
+                                onChange={(e) => handleUpdate(wc.id, 'name', e.target.value)}
+                                title={wc.name}
+                                className={`w-full font-black bg-slate-50/60 hover:bg-white focus:bg-white border border-transparent hover:border-slate-200 focus:border-indigo-500 rounded-md px-2 py-1 focus:outline-none text-xs uppercase transition-colors ${
+                                  isEnabled ? 'text-slate-900' : 'text-slate-500 line-through'
+                                }`}
+                              />
+                            </div>
                           </td>
 
                           <td className="py-2 px-2">
@@ -472,7 +739,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                           </td>
 
                           <td className="py-2 px-2 text-right font-black text-indigo-700 font-mono">
-                            {cap.toFixed(1)}h
+                            {isEnabled ? `${cap.toFixed(1)}h` : <span className="text-slate-400 italic">0.0h (inativo)</span>}
                           </td>
 
                           <td className="py-2 px-2 text-center">
@@ -494,7 +761,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
 
               {filteredList.length === 0 && (
                 <div className="text-center py-8 text-slate-500 text-xs italic">
-                  Nenhum centro de trabalho cadastrado para o agrupador selecionado.
+                  Nenhum centro de trabalho cadastrado para o filtro selecionado.
                 </div>
               )}
             </div>
@@ -506,8 +773,8 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
           <div className="flex items-center gap-2 text-xs text-slate-600">
             <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>
-              Total: <strong className="text-slate-900">{list.length} centros</strong> em{' '}
-              <strong className="text-slate-900">{sectorGroups.length} agrupadores</strong> | Capacidade Global:{' '}
+              Total: <strong className="text-slate-900">{activeCount} ativos</strong> de {list.length} centros em{' '}
+              <strong className="text-slate-900">{sectorGroups.length} agrupadores</strong> | Capacidade Ativa:{' '}
               <strong className="text-indigo-700 font-mono">{totalWeeklyCapacity.toFixed(1)}h/semana</strong>
             </span>
           </div>
@@ -529,6 +796,104 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* S-CURVE / TURBINE LINK DELETION CONFIRMATION DIALOG                      */}
+      {/* ========================================================================= */}
+      {deleteConfirmation && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 max-w-lg w-full shadow-2xl space-y-4 text-slate-900 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 border border-rose-200 flex items-center justify-center font-bold shrink-0 mt-0.5">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                  <span>Excluir Centro com Vínculos na Curva S</span>
+                </h4>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  O centro de trabalho <strong className="text-rose-700 font-mono font-bold uppercase">{deleteConfirmation.wc.name}</strong> possui vínculos ativos com parametrizações de Curva S.
+                </p>
+              </div>
+            </div>
+
+            {/* Warning Callout Box */}
+            <div className="bg-rose-50/80 border border-rose-200/90 rounded-xl p-3.5 space-y-2.5 text-xs text-slate-800">
+              <div className="flex items-center gap-1.5 text-rose-800 font-bold">
+                <TrendingUp className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>Impacto nos Registros da Curva S:</span>
+              </div>
+              <p className="text-[11.5px] leading-relaxed text-slate-700">
+                Tem certeza que deseja excluir? Ao confirmar a exclusão, <strong>os registros e configurações da Curva S serão alterados automaticamente</strong> (o centro será removido dos rateios percentuais do setor e seus históricos vinculados).
+              </p>
+
+              {/* Linked Turbines / S-Curve Models */}
+              {deleteConfirmation.linkedTurbines.length > 0 && (
+                <div className="space-y-1 pt-1 border-t border-rose-200/60">
+                  <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wider block">
+                    Modelos de Curva S Afetados ({deleteConfirmation.linkedTurbines.length}):
+                  </span>
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
+                    {deleteConfirmation.linkedTurbines.map((lt, idx) => (
+                      <span
+                        key={idx}
+                        className="bg-white border border-rose-200 text-rose-800 px-2 py-0.5 rounded-md text-[10px] font-bold"
+                        title={lt.detail}
+                      >
+                        {lt.modelName} ({lt.sectorName})
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Linked Projects */}
+              {deleteConfirmation.linkedProjects.length > 0 && (
+                <div className="space-y-1 pt-1 border-t border-rose-200/60">
+                  <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wider block">
+                    Projetos com Horas Vinculadas ({deleteConfirmation.linkedProjects.length}):
+                  </span>
+                  <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
+                    {deleteConfirmation.linkedProjects.map((lp, idx) => (
+                      <span
+                        key={idx}
+                        className="bg-white border border-rose-200 text-slate-700 px-2 py-0.5 rounded-md text-[10px] font-bold"
+                      >
+                        {lp.projectName} ({lp.hours.toLocaleString()}h)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Prompt */}
+            <p className="text-xs font-semibold text-slate-700">
+              Deseja realmente prosseguir com a exclusão do centro de trabalho e a atualização dos registros da Curva S?
+            </p>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmation(null)}
+                className="px-3.5 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-xl border border-slate-300 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteWithSCurveUpdate}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Sim, Excluir e Alterar Curva S</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

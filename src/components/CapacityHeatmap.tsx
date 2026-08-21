@@ -16,7 +16,9 @@ export const CapacityHeatmap: React.FC<CapacityHeatmapProps> = ({
   const [onlyOverloaded, setOnlyOverloaded] = useState(false);
 
   // Filter work centers
-  const filteredWorkCenters = workCenters.filter((wc) => {
+  const activeWorkCenters = workCenters.filter((wc) => wc.enabled !== false);
+
+  const filteredWorkCenters = activeWorkCenters.filter((wc) => {
     const matchesSearch = wc.name.toLowerCase().includes(searchTerm.toLowerCase());
 
     if (!onlyOverloaded) return matchesSearch;

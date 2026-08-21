@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import {
   WorkCenter,
   WorkCenterCapacitySummary,
@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { calculateWeeklyCapacity, generateWeeklySchedule } from '../utils/calculator';
+import { getProjectTotalHours } from '../utils/dateValidation';
 import { parseISO, format, addDays } from 'date-fns';
 import {
   Search,
@@ -150,6 +151,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
   const activeProjects = useMemo(() => projects.filter((p) => p.enabled !== false), [projects]);
   const [selectedSimProjectId, setSelectedSimProjectId] = useState<string>('');
   const [projectShiftDays, setProjectShiftDays] = useState<number>(0);
+  const deferredShiftDays = useDeferredValue(projectShiftDays);
   const [saveToast, setSaveToast] = useState<string | null>(null);
 
   // Derived current simulated project ID (safe fallback without setState inside effect)
@@ -167,15 +169,15 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
 
   // Dynamically calculate effective projects with shift simulation applied
   const effectiveProjects = useMemo(() => {
-    if (!projectShiftDays || projectShiftDays === 0 || !currentSimProjectId) {
+    if (!deferredShiftDays || deferredShiftDays === 0 || !currentSimProjectId) {
       return projects;
     }
-    return projects.map((p) => (p.id === currentSimProjectId ? shiftProjectDates(p, projectShiftDays) : p));
-  }, [projects, currentSimProjectId, projectShiftDays]);
+    return projects.map((p) => (p.id === currentSimProjectId ? shiftProjectDates(p, deferredShiftDays) : p));
+  }, [projects, currentSimProjectId, deferredShiftDays]);
 
   // Dynamically recalculate weekly schedule in real time during simulation
   const effectiveSchedule = useMemo(() => {
-    if (!projectShiftDays || projectShiftDays === 0) {
+    if (!deferredShiftDays || deferredShiftDays === 0) {
       return {
         weeklyBuckets,
         workCenterSummaries: summaries,
@@ -186,40 +188,56 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       weeklyBuckets: result.weeklyBuckets,
       workCenterSummaries: result.workCenterSummaries,
     };
-  }, [effectiveProjects, workCenters, projectShiftDays, weeklyBuckets, summaries]);
+  }, [effectiveProjects, workCenters, deferredShiftDays, weeklyBuckets, summaries]);
 
   const currentWeeklyBuckets = effectiveSchedule.weeklyBuckets;
   const currentSummaries = effectiveSchedule.workCenterSummaries;
 
-  // Calculate sector group summaries (Aggregated)
+  const activeWorkCenters = useMemo(
+    () => workCenters.filter((wc) => wc.enabled !== false),
+    [workCenters]
+  );
+
+  // Calculate sector group summaries (Aggregated) with fast index
   const sectorSummaries: SectorGroupSummary[] = useMemo(() => {
     const allGroups = Array.from(
-      new Set([...sectorGroups, ...workCenters.map((wc) => getWorkCenterCategory(wc))])
+      new Set([...sectorGroups, ...activeWorkCenters.map((wc) => getWorkCenterCategory(wc))])
     );
+
+    const summariesByWcId = new Map<string, WorkCenterCapacitySummary>();
+    for (const s of currentSummaries) {
+      summariesByWcId.set(s.workCenter.id, s);
+    }
 
     return allGroups
       .map((grp) => {
-        const groupWcs = workCenters.filter((wc) => getWorkCenterCategory(wc) === grp);
+        const groupWcs = activeWorkCenters.filter((wc) => getWorkCenterCategory(wc) === grp);
         if (groupWcs.length === 0) return null;
 
-        const groupWcIds = new Set(groupWcs.map((wc) => wc.id));
-        const groupWcSummaries = currentSummaries.filter((s) => groupWcIds.has(s.workCenter.id));
+        const groupWcIds = groupWcs.map((wc) => wc.id);
 
-        const totalResources = groupWcs.reduce((acc, wc) => acc + (wc.resourcesCount || 0), 0);
-        const weeklyCapacity = groupWcs.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0);
-        const totalRequiredHours = groupWcSummaries.reduce(
-          (acc, s) => acc + (s.totalRequiredHours || 0),
-          0
-        );
+        let totalResources = 0;
+        let weeklyCapacity = 0;
+        let totalRequiredHours = 0;
+
+        for (let i = 0; i < groupWcs.length; i++) {
+          const wc = groupWcs[i];
+          totalResources += wc.resourcesCount || 0;
+          weeklyCapacity += calculateWeeklyCapacity(wc);
+          const s = summariesByWcId.get(wc.id);
+          if (s) totalRequiredHours += s.totalRequiredHours || 0;
+        }
 
         let peakWeeklyLoad = 0;
         let overloadedWeeksCount = 0;
         let totalUtilizationSum = 0;
+        const bucketCount = currentWeeklyBuckets.length;
 
-        for (const bucket of currentWeeklyBuckets) {
+        for (let b = 0; b < bucketCount; b++) {
+          const loads = currentWeeklyBuckets[b].workCenterLoads;
           let weekLoad = 0;
-          for (const wc of groupWcs) {
-            weekLoad += bucket.workCenterLoads[wc.id] || 0;
+          for (let i = 0; i < groupWcIds.length; i++) {
+            weekLoad += loads[groupWcIds[i]] || 0;
           }
 
           if (weekLoad > peakWeeklyLoad) {
@@ -237,8 +255,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
         const maxUtilizationPercentage =
           weeklyCapacity > 0 ? (peakWeeklyLoad / weeklyCapacity) * 100 : 0;
         const averageUtilizationPercentage =
-          currentWeeklyBuckets.length > 0 && weeklyCapacity > 0
-            ? totalUtilizationSum / currentWeeklyBuckets.length
+          bucketCount > 0 && weeklyCapacity > 0
+            ? totalUtilizationSum / bucketCount
             : 0;
 
         const status: 'OK' | 'WARNING' | 'CRITICAL' =
@@ -263,22 +281,33 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
         };
       })
       .filter((s): s is SectorGroupSummary => s !== null);
-  }, [sectorGroups, workCenters, currentSummaries, currentWeeklyBuckets]);
+  }, [sectorGroups, activeWorkCenters, currentSummaries, currentWeeklyBuckets]);
 
-  // Consolidated "TODOS (Fábrica Completa)" summary
+  // Consolidated "TODOS (Fábrica Completa)" summary with fast single-pass
   const allFactorySummary: SectorGroupSummary = useMemo(() => {
-    const totalResources = workCenters.reduce((acc, wc) => acc + (wc.resourcesCount || 0), 0);
-    const weeklyCapacity = workCenters.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0);
-    const totalRequiredHours = currentSummaries.reduce((acc, s) => acc + (s.totalRequiredHours || 0), 0);
+    let totalResources = 0;
+    let weeklyCapacity = 0;
+    for (let i = 0; i < activeWorkCenters.length; i++) {
+      const wc = activeWorkCenters[i];
+      totalResources += wc.resourcesCount || 0;
+      weeklyCapacity += calculateWeeklyCapacity(wc);
+    }
+
+    let totalRequiredHours = 0;
+    for (let i = 0; i < currentSummaries.length; i++) {
+      totalRequiredHours += currentSummaries[i].totalRequiredHours || 0;
+    }
 
     let peakWeeklyLoad = 0;
     let overloadedWeeksCount = 0;
     let totalUtilizationSum = 0;
+    const bucketCount = currentWeeklyBuckets.length;
 
-    for (const bucket of currentWeeklyBuckets) {
+    for (let b = 0; b < bucketCount; b++) {
+      const loads = currentWeeklyBuckets[b].workCenterLoads;
       let weekLoad = 0;
-      for (const wc of workCenters) {
-        weekLoad += bucket.workCenterLoads[wc.id] || 0;
+      for (const wcId in loads) {
+        weekLoad += loads[wcId] || 0;
       }
 
       if (weekLoad > peakWeeklyLoad) {
@@ -296,8 +325,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     const maxUtilizationPercentage =
       weeklyCapacity > 0 ? (peakWeeklyLoad / weeklyCapacity) * 100 : 0;
     const averageUtilizationPercentage =
-      currentWeeklyBuckets.length > 0 && weeklyCapacity > 0
-        ? totalUtilizationSum / currentWeeklyBuckets.length
+      bucketCount > 0 && weeklyCapacity > 0
+        ? totalUtilizationSum / bucketCount
         : 0;
 
     const status: 'OK' | 'WARNING' | 'CRITICAL' =
@@ -309,7 +338,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
 
     return {
       groupName: 'TODOS (Fábrica Completa)',
-      workCenterCount: workCenters.length,
+      workCenterCount: activeWorkCenters.length,
       totalResources,
       weeklyCapacity,
       totalRequiredHours,
@@ -317,10 +346,10 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       maxUtilizationPercentage,
       averageUtilizationPercentage,
       overloadedWeeksCount,
-      workCenters,
+      workCenters: activeWorkCenters,
       status,
     };
-  }, [workCenters, currentSummaries, currentWeeklyBuckets]);
+  }, [activeWorkCenters, currentSummaries, currentWeeklyBuckets]);
 
   // Current selected group for GROUP mode
   const currentGroupSummary = useMemo(() => {
@@ -434,7 +463,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
 
   // Impact metrics comparison: Original baseline vs Simulated shifted state
   const simulationImpact = useMemo(() => {
-    if (!projectShiftDays || projectShiftDays === 0) {
+    if (!deferredShiftDays || deferredShiftDays === 0) {
       return null;
     }
 
@@ -482,7 +511,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       isRelieved,
       targetCapacity,
     };
-  }, [projectShiftDays, viewMode, currentGroupSummary, selectedIndividualSummary, weeklyBuckets]);
+  }, [deferredShiftDays, viewMode, currentGroupSummary, selectedIndividualSummary, weeklyBuckets]);
 
   const handleResourceCountChange = (wc: WorkCenter, delta: number) => {
     const newCount = Math.max(1, wc.resourcesCount + delta);
@@ -903,6 +932,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                         name={proj.id}
                         stackId="a"
                         fill={proj.color}
+                        isAnimationActive={false}
                         stroke={isSimulated ? '#06b6d4' : undefined}
                         strokeWidth={isSimulated ? 2 : 0}
                         radius={isLast ? [3, 3, 0, 0] : [0, 0, 0, 0]}
@@ -1161,6 +1191,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                         name={proj.id}
                         stackId="a"
                         fill={proj.color}
+                        isAnimationActive={false}
                         stroke={isSimulated ? '#06b6d4' : undefined}
                         strokeWidth={isSimulated ? 2 : 0}
                         radius={isLast ? [3, 3, 0, 0] : [0, 0, 0, 0]}
@@ -1225,10 +1256,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
               className="bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer max-w-xs"
             >
               {activeProjects.map((p) => {
-                let totalH = 0;
-                if (p.workCenterHours) {
-                  totalH = (Object.values(p.workCenterHours) as number[]).reduce((a, b) => a + (Number(b) || 0), 0);
-                }
+                const totalH = getProjectTotalHours(p, workCenters);
                 return (
                   <option key={p.id} value={p.id}>
                     {p.name} ({Math.round(totalH)}h)

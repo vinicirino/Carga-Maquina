@@ -4,15 +4,8 @@ import {
   addWeeks,
   startOfWeek,
   endOfWeek,
-  isBefore,
-  isAfter,
-  isSameDay,
   format,
-  min as minDate,
-  max as maxDate,
-  addDays,
 } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 import { getWorkCenterCategory } from './categoryHelper';
 import {
   WorkCenter,
@@ -36,6 +29,8 @@ export function calculateDailyCapacity(wc: WorkCenter): number {
   return wc.dailyHours * wc.resourcesCount * (wc.efficiencyPercentage / 100);
 }
 
+const MS_PER_DAY = 86400000;
+
 export function generateWeeklySchedule(
   projects: Project[],
   workCenters: WorkCenter[]
@@ -55,8 +50,9 @@ export function generateWeeklySchedule(
   };
 } {
   const activeProjects = projects.filter((p) => p.enabled !== false);
+  const activeWorkCenters = workCenters.filter((wc) => wc.enabled !== false);
 
-  if (activeProjects.length === 0 || workCenters.length === 0) {
+  if (activeProjects.length === 0 || activeWorkCenters.length === 0) {
     return {
       weeklyBuckets: [],
       workCenterSummaries: [],
@@ -74,26 +70,67 @@ export function generateWeeklySchedule(
     };
   }
 
+  // Pre-index active work centers for O(1) lookup
+  const wcById = new Map<string, WorkCenter>();
+  const wcByName = new Map<string, WorkCenter>();
+  const wcCategoryMap = new Map<string, string>();
+  const wcWeeklyCapMap = new Map<string, number>();
+  const wcDailyCapMap = new Map<string, number>();
+
+  for (const wc of activeWorkCenters) {
+    wcById.set(wc.id, wc);
+    wcByName.set(wc.name, wc);
+    wcCategoryMap.set(wc.id, getWorkCenterCategory(wc));
+    wcWeeklyCapMap.set(wc.id, calculateWeeklyCapacity(wc));
+    wcDailyCapMap.set(wc.id, calculateDailyCapacity(wc));
+  }
+
   // 1. Find min start date and max end date among active projects
+  let minStartMs = Number.MAX_SAFE_INTEGER;
+  let maxEndMs = Number.MIN_SAFE_INTEGER;
   let globalStart = parseISO(activeProjects[0].startDate);
   let globalEnd = parseISO(activeProjects[0].endDate);
 
-  for (const p of activeProjects) {
+  // Pre-parse project dates
+  const parsedProjects = activeProjects.map((p) => {
     const pStart = parseISO(p.startDate);
     const pEnd = parseISO(p.endDate);
-    if (isBefore(pStart, globalStart)) globalStart = pStart;
-    if (isAfter(pEnd, globalEnd)) globalEnd = pEnd;
-  }
+    const pStartMs = pStart.getTime();
+    const pEndMs = pEnd.getTime();
+
+    if (pStartMs < minStartMs) {
+      minStartMs = pStartMs;
+      globalStart = pStart;
+    }
+    if (pEndMs > maxEndMs) {
+      maxEndMs = pEndMs;
+      globalEnd = pEnd;
+    }
+
+    return {
+      project: p,
+      pStart,
+      pEnd,
+      pStartMs,
+      pEndMs,
+    };
+  });
 
   // Align globalStart to beginning of that week (Monday)
   const firstWeekStart = startOfWeek(globalStart, { weekStartsOn: 1 });
   const lastWeekEnd = endOfWeek(globalEnd, { weekStartsOn: 1 });
 
-  // 2. Build weekly buckets
-  const weeklyBuckets: WeeklyBucket[] = [];
-  let currWeekStart = firstWeekStart;
+  // 2. Build weekly buckets with precalculated timestamp ranges
+  interface FastBucket extends WeeklyBucket {
+    startMs: number;
+    endMs: number;
+  }
 
-  while (isBefore(currWeekStart, lastWeekEnd) || isSameDay(currWeekStart, lastWeekEnd)) {
+  const weeklyBuckets: FastBucket[] = [];
+  let currWeekStart = firstWeekStart;
+  const lastWeekEndMs = lastWeekEnd.getTime();
+
+  while (currWeekStart.getTime() <= lastWeekEndMs) {
     const currWeekEnd = endOfWeek(currWeekStart, { weekStartsOn: 1 });
     const weekLabel = `Sem. ${format(currWeekStart, 'ww/yyyy')} (${format(currWeekStart, 'dd/MM/yy')} - ${format(currWeekEnd, 'dd/MM/yy')})`;
     const weekKey = format(currWeekStart, 'yyyy-MM-dd');
@@ -102,6 +139,8 @@ export function generateWeeklySchedule(
       weekKey,
       startDate: currWeekStart,
       endDate: currWeekEnd,
+      startMs: currWeekStart.getTime(),
+      endMs: currWeekEnd.getTime(),
       label: weekLabel,
       workCenterLoads: {},
       projectBreakdown: {},
@@ -110,65 +149,96 @@ export function generateWeeklySchedule(
     currWeekStart = addWeeks(currWeekStart, 1);
   }
 
-  // 3. Distribute project hours across weeks
-  for (const project of activeProjects) {
-    const pStart = parseISO(project.startDate);
-    const pEnd = parseISO(project.endDate);
+  // 3. Distribute project hours across weeks using fast timestamp math
+  for (const { project, pStart, pEnd, pStartMs, pEndMs } of parsedProjects) {
+    if (!project.workCenterHours) continue;
 
-    for (const [wcNameOrId, totalHours] of Object.entries(project.workCenterHours)) {
-      if (!totalHours || totalHours <= 0) continue;
+    // Build canonical map of work center -> hours for this project (strict O(N) with NO double counting)
+    const canonicalWcHours = new Map<string, { wc: WorkCenter; hours: number }>();
+    const seenWcIds = new Set<string>();
 
-      // Match work center by ID or Name
-      const wc = workCenters.find((w) => w.id === wcNameOrId || w.name === wcNameOrId);
-      if (!wc) continue;
+    // Pass 1: Match by exact WC ID
+    for (const wc of activeWorkCenters) {
+      const valById = project.workCenterHours[wc.id];
+      if (typeof valById === 'number' && !isNaN(valById) && valById > 0) {
+        canonicalWcHours.set(wc.id, { wc, hours: valById });
+        seenWcIds.add(wc.id);
+      }
+    }
 
+    // Pass 2: Match by exact WC Name (only if not already found by ID)
+    for (const wc of activeWorkCenters) {
+      if (seenWcIds.has(wc.id)) continue;
+      const valByName = project.workCenterHours[wc.name];
+      if (typeof valByName === 'number' && !isNaN(valByName) && valByName > 0) {
+        canonicalWcHours.set(wc.id, { wc, hours: valByName });
+        seenWcIds.add(wc.id);
+      }
+    }
+
+    // Pass 3: Case-insensitive / Trim match for any remaining active work centers
+    for (const wc of activeWorkCenters) {
+      if (seenWcIds.has(wc.id)) continue;
+      const wcNorm = wc.name.trim().toUpperCase();
+      for (const [key, hrs] of Object.entries(project.workCenterHours)) {
+        if (typeof hrs === 'number' && !isNaN(hrs) && hrs > 0 && key.trim().toUpperCase() === wcNorm) {
+          canonicalWcHours.set(wc.id, { wc, hours: hrs });
+          seenWcIds.add(wc.id);
+          break;
+        }
+      }
+    }
+
+    if (canonicalWcHours.size === 0) continue;
+
+    for (const { wc, hours: totalHours } of canonicalWcHours.values()) {
       // 1. Check specific dates for this work center
       let customDates =
-        project.workCenterDates?.[wcNameOrId] ||
         project.workCenterDates?.[wc.id] ||
         project.workCenterDates?.[wc.name];
 
-      // 2. If no specific work center date, check for Sector Group dates (e.g. CORTE, USINAGEM, SOLDA)
+      // 2. If no specific work center date, check for Sector Group dates
       if (!customDates?.startDate && !customDates?.endDate) {
-        const wcCategory = getWorkCenterCategory(wc);
+        const wcCategory = wcCategoryMap.get(wc.id) || getWorkCenterCategory(wc);
         customDates =
           project.groupDates?.[wcCategory] ||
           project.workCenterDates?.[wcCategory];
       }
 
-      let wcStart = customDates?.startDate ? parseISO(customDates.startDate) : pStart;
-      let wcEnd = customDates?.endDate ? parseISO(customDates.endDate) : pEnd;
+      let wcStartMs = pStartMs;
+      let wcEndMs = pEndMs;
 
-      // Ensure custom dates stay strictly within the global project timeframe [pStart, pEnd]
-      if (isBefore(wcStart, pStart)) wcStart = pStart;
-      if (isAfter(wcStart, pEnd)) wcStart = pEnd;
-      if (isAfter(wcEnd, pEnd)) wcEnd = pEnd;
-      if (isBefore(wcEnd, pStart)) wcEnd = pStart;
-
-      if (isAfter(wcStart, wcEnd)) {
-        wcEnd = wcStart;
+      if (customDates?.startDate) {
+        const parsed = parseISO(customDates.startDate).getTime();
+        wcStartMs = Math.max(pStartMs, Math.min(pEndMs, parsed));
+      }
+      if (customDates?.endDate) {
+        const parsed = parseISO(customDates.endDate).getTime();
+        wcEndMs = Math.min(pEndMs, Math.max(pStartMs, parsed));
       }
 
-      const totalWcDays = Math.max(1, differenceInCalendarDays(wcEnd, wcStart) + 1);
+      if (wcStartMs > wcEndMs) {
+        wcEndMs = wcStartMs;
+      }
 
-      for (const bucket of weeklyBuckets) {
-        // Check overlap between bucket week and work center load timeframe
-        if (isAfter(bucket.startDate, wcEnd) || isBefore(bucket.endDate, wcStart)) {
+      const totalWcDays = Math.max(1, Math.round((wcEndMs - wcStartMs) / MS_PER_DAY) + 1);
+
+      for (let b = 0; b < weeklyBuckets.length; b++) {
+        const bucket = weeklyBuckets[b];
+        // Fast bounds check
+        if (bucket.startMs > wcEndMs || bucket.endMs < wcStartMs) {
           continue;
         }
 
-        // Calculate overlap days
-        const overlapStart = maxDate([bucket.startDate, wcStart]);
-        const overlapEnd = minDate([bucket.endDate, wcEnd]);
-        const overlapDays = Math.max(0, differenceInCalendarDays(overlapEnd, overlapStart) + 1);
+        const overlapStart = Math.max(bucket.startMs, wcStartMs);
+        const overlapEnd = Math.min(bucket.endMs, wcEndMs);
+        const overlapDays = Math.max(0, Math.round((overlapEnd - overlapStart) / MS_PER_DAY) + 1);
 
         if (overlapDays <= 0) continue;
 
-        // Fraction of work center load executed in this week
         const weekFraction = overlapDays / totalWcDays;
         const hoursInThisWeek = totalHours * weekFraction;
 
-        // Add to bucket load
         bucket.workCenterLoads[wc.id] = (bucket.workCenterLoads[wc.id] || 0) + hoursInThisWeek;
 
         if (!bucket.projectBreakdown[wc.id]) {
@@ -190,7 +260,7 @@ export function generateWeeklySchedule(
   const overloadedWorkCenterSet = new Set<string>();
   const overloadedWeekSet = new Set<string>();
 
-  for (const wc of workCenters) {
+  for (const wc of activeWorkCenters) {
     const weeklyCap = calculateWeeklyCapacity(wc);
     const dailyCap = calculateDailyCapacity(wc);
     totalCapacityAllCentersWeekly += weeklyCap;
@@ -200,10 +270,26 @@ export function generateWeeklySchedule(
     let sumWeeklyUtilization = 0;
     let overloadedWeeksForThisWc = 0;
 
-    // Sum total required hours for this work center across all active projects
+    // Sum total required hours for this work center across all active projects with exact deduplication
     for (const proj of activeProjects) {
-      const hrs = proj.workCenterHours[wc.id] || proj.workCenterHours[wc.name] || 0;
-      wcTotalRequiredHours += hrs;
+      if (!proj.workCenterHours) continue;
+      let hrs = 0;
+      if (typeof proj.workCenterHours[wc.id] === 'number' && !isNaN(proj.workCenterHours[wc.id])) {
+        hrs = proj.workCenterHours[wc.id];
+      } else if (typeof proj.workCenterHours[wc.name] === 'number' && !isNaN(proj.workCenterHours[wc.name])) {
+        hrs = proj.workCenterHours[wc.name];
+      } else {
+        const wcNorm = wc.name.trim().toUpperCase();
+        for (const [k, v] of Object.entries(proj.workCenterHours)) {
+          if (typeof v === 'number' && !isNaN(v) && k.trim().toUpperCase() === wcNorm) {
+            hrs = v;
+            break;
+          }
+        }
+      }
+      if (hrs > 0) {
+        wcTotalRequiredHours += hrs;
+      }
     }
     totalDemandAllCenters += wcTotalRequiredHours;
 

@@ -2,7 +2,7 @@ import { Project, WorkCenter } from '../types';
 
 /**
  * Deduplicates workCenterHours in case both ID and Name were stored for the same work center,
- * or removes invalid zero/null entries.
+ * or removes invalid zero/null entries. Guarantees that each work center only counts ONCE per project.
  */
 export function deduplicateProjectWorkCenterHours(
   project: Project,
@@ -14,42 +14,58 @@ export function deduplicateProjectWorkCenterHours(
   if (rawEntries.length === 0) return project;
 
   const cleanHours: Record<string, number> = {};
-  const seenWcIds = new Set<string>();
 
   if (workCenters && workCenters.length > 0) {
-    // 1. Pass 1: IDs
-    for (const [key, hours] of rawEntries) {
-      if (hours === undefined || hours === null || isNaN(hours) || hours <= 0) continue;
-      const wcById = workCenters.find((w) => w.id === key);
-      if (wcById) {
-        cleanHours[wcById.id] = (cleanHours[wcById.id] || 0) + hours;
-        seenWcIds.add(wcById.id);
+    const seenWcIds = new Set<string>();
+
+    for (const wc of workCenters) {
+      if (seenWcIds.has(wc.id)) continue;
+      let hrs: number | undefined = undefined;
+
+      // 1. Try exact ID
+      const valById = project.workCenterHours[wc.id];
+      if (typeof valById === 'number' && !isNaN(valById) && valById > 0) {
+        hrs = valById;
+      }
+      // 2. Try exact Name
+      else if (project.workCenterHours[wc.name] !== undefined) {
+        const valByName = project.workCenterHours[wc.name];
+        if (typeof valByName === 'number' && !isNaN(valByName) && valByName > 0) {
+          hrs = valByName;
+        }
+      }
+      // 3. Try case-insensitive matching
+      else {
+        const wcNorm = wc.name.trim().toUpperCase();
+        for (const [k, v] of rawEntries) {
+          if (typeof v === 'number' && !isNaN(v) && v > 0 && k.trim().toUpperCase() === wcNorm) {
+            hrs = v;
+            break;
+          }
+        }
+      }
+
+      if (hrs !== undefined && hrs > 0) {
+        cleanHours[wc.id] = hrs;
+        seenWcIds.add(wc.id);
       }
     }
 
-    // 2. Pass 2: Names (only add if the work center ID wasn't already mapped)
+    // Keep any non-matching unmapped keys untouched
     for (const [key, hours] of rawEntries) {
-      if (hours === undefined || hours === null || isNaN(hours) || hours <= 0) continue;
-      const wcById = workCenters.find((w) => w.id === key);
-      if (wcById) continue; // Handled in pass 1
-
-      const wcByName = workCenters.find(
-        (w) => w.name.trim().toUpperCase() === key.trim().toUpperCase()
-      );
-      if (wcByName) {
-        if (!seenWcIds.has(wcByName.id)) {
-          cleanHours[wcByName.id] = hours;
-          seenWcIds.add(wcByName.id);
+      if (typeof hours === 'number' && !isNaN(hours) && hours > 0) {
+        const isMatched = workCenters.some(
+          (w) => w.id === key || w.name.trim().toUpperCase() === key.trim().toUpperCase()
+        );
+        if (!isMatched && !cleanHours[key]) {
+          cleanHours[key] = hours;
         }
-        // If seenWcIds already has wcByName.id, it was a duplicate key! We omit it.
-      } else {
-        cleanHours[key] = hours;
       }
     }
   } else {
-    // Without workCenters list, simply copy valid entries
+    // Without workCenters list, copy valid entries
     for (const [key, hours] of rawEntries) {
-      if (hours !== undefined && hours !== null && !isNaN(hours) && hours > 0) {
+      if (typeof hours === 'number' && !isNaN(hours) && hours > 0) {
         cleanHours[key] = hours;
       }
     }
@@ -59,6 +75,43 @@ export function deduplicateProjectWorkCenterHours(
     ...project,
     workCenterHours: cleanHours,
   };
+}
+
+/**
+ * Calculates total required hours for a project across all work centers with strict deduplication.
+ */
+export function getProjectTotalHours(project: Project, workCenters?: WorkCenter[]): number {
+  if (!project.workCenterHours) return 0;
+  if (!workCenters || workCenters.length === 0) {
+    return Object.values(project.workCenterHours).reduce<number>(
+      (acc, h) => acc + (Number(h) || 0),
+      0
+    );
+  }
+  let sum = 0;
+  const seenWcIds = new Set<string>();
+  for (const wc of workCenters) {
+    if (seenWcIds.has(wc.id)) continue;
+    let hrs = 0;
+    if (typeof project.workCenterHours[wc.id] === 'number' && !isNaN(project.workCenterHours[wc.id])) {
+      hrs = project.workCenterHours[wc.id];
+    } else if (typeof project.workCenterHours[wc.name] === 'number' && !isNaN(project.workCenterHours[wc.name])) {
+      hrs = project.workCenterHours[wc.name];
+    } else {
+      const norm = wc.name.trim().toUpperCase();
+      for (const [k, v] of Object.entries(project.workCenterHours)) {
+        if (typeof v === 'number' && !isNaN(v) && k.trim().toUpperCase() === norm) {
+          hrs = v;
+          break;
+        }
+      }
+    }
+    if (hrs > 0) {
+      sum += hrs;
+      seenWcIds.add(wc.id);
+    }
+  }
+  return sum;
 }
 
 /**

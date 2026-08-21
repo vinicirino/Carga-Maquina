@@ -102,7 +102,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
       enabled: true,
     };
 
-    const sanitized = sanitizeProjectSchedules(rawProject);
+    const sanitized = sanitizeProjectSchedules(rawProject, workCenters);
     onAddProject(sanitized);
 
     setName('');
@@ -229,40 +229,42 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto border border-slate-200 p-3 rounded-xl bg-slate-50">
-              {workCenters.map((wc) => {
-                const category = getWorkCenterCategory(wc);
-                return (
-                  <div
-                    key={wc.id}
-                    className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between shadow-2xs"
-                  >
-                    <div className="min-w-0 mr-2">
-                      <span
-                        className="text-xs font-bold text-slate-800 truncate block"
-                        title={wc.name}
-                      >
-                        {wc.name}
-                      </span>
-                      <span className="text-[9px] font-bold text-slate-400 uppercase">
-                        {category}
-                      </span>
-                    </div>
+              {workCenters
+                .filter((wc) => wc.enabled !== false)
+                .map((wc) => {
+                  const category = getWorkCenterCategory(wc);
+                  return (
+                    <div
+                      key={wc.id}
+                      className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between shadow-2xs"
+                    >
+                      <div className="min-w-0 mr-2">
+                        <span
+                          className="text-xs font-bold text-slate-800 truncate block"
+                          title={wc.name}
+                        >
+                          {wc.name}
+                        </span>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase">
+                          {category}
+                        </span>
+                      </div>
 
-                    <div className="flex items-center space-x-1 shrink-0">
-                      <input
-                        type="number"
-                        placeholder="0"
-                        value={workCenterHours[wc.name] || ''}
-                        onChange={(e) =>
-                          handleHourChange(wc.name, parseFloat(e.target.value) || 0)
-                        }
-                        className="w-20 text-right text-xs font-bold border border-slate-300 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-500"
-                      />
-                      <span className="text-[10px] text-slate-400 font-semibold">h</span>
+                      <div className="flex items-center space-x-1 shrink-0">
+                        <input
+                          type="number"
+                          placeholder="0"
+                          value={workCenterHours[wc.name] || ''}
+                          onChange={(e) =>
+                            handleHourChange(wc.name, parseFloat(e.target.value) || 0)
+                          }
+                          className="w-20 text-right text-xs font-bold border border-slate-300 rounded px-2 py-1 focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <span className="text-[10px] text-slate-400 font-semibold">h</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
         </div>

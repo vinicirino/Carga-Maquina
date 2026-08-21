@@ -20,6 +20,7 @@ export interface WorkCenter {
   resourcesCount: number; // e.g., 5
   efficiencyPercentage: number; // e.g., 100%
   category?: SectorGroup | string;
+  enabled?: boolean; // When false, excluded from charts & schedule calculation
 }
 
 export interface Project {

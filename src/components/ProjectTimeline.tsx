@@ -16,6 +16,7 @@ import { getWorkCenterCategory } from '../utils/categoryHelper';
 import {
   clampDateString,
   sanitizeProjectSchedules,
+  getProjectTotalHours,
 } from '../utils/dateValidation';
 import {
   Calendar,
@@ -91,10 +92,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
     }
 
     // Derive initial config from project data
-    const totalHours = Object.values(project.workCenterHours || {}).reduce<number>(
-      (acc, h) => acc + (Number(h) || 0),
-      0
-    );
+    const totalHours = getProjectTotalHours(project, workCenters);
 
     const initialCurves: Record<string, SectorCurveConfig> = {};
     sectorGroups.forEach((g) => {
@@ -602,10 +600,7 @@ export const ProjectTimeline: React.FC<ProjectTimelineProps> = ({
       <div className="space-y-3">
         {projects.map((project) => {
           const isExpanded = expandedProjectId === project.id;
-          const totalHours = Object.values(project.workCenterHours || {}).reduce<number>(
-            (acc, h) => acc + (Number(h) || 0),
-            0
-          );
+          const totalHours = getProjectTotalHours(project, workCenters);
 
           let durationDays = 0;
           let durationWeeks = 0;

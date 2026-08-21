@@ -38,6 +38,7 @@ import {
 } from '../types';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { calculateWeeklyCapacity } from '../utils/calculator';
+import { getProjectTotalHours } from '../utils/dateValidation';
 import { KPIs } from './KPIs';
 
 interface OverviewDashboardProps {
@@ -74,10 +75,11 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onNavigateToSimulation,
 }) => {
   const activeProjects = useMemo(() => projects.filter((p) => p.enabled !== false), [projects]);
+  const activeWorkCenters = useMemo(() => workCenters.filter((wc) => wc.enabled !== false), [workCenters]);
 
   // Aggregate Plant-wide Weekly Capacity & Demand Curve
   const plantWeeklyChartData = useMemo(() => {
-    const totalWeeklyInstalledCapacity = workCenters.reduce(
+    const totalWeeklyInstalledCapacity = activeWorkCenters.reduce(
       (acc, wc) => acc + calculateWeeklyCapacity(wc),
       0
     );
@@ -92,7 +94,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
       for (const proj of activeProjects) {
         let projTotalHours = 0;
-        for (const wc of workCenters) {
+        for (const wc of activeWorkCenters) {
           projTotalHours += bucket.projectBreakdown[wc.id]?.[proj.id] || 0;
         }
         row[proj.id] = Math.round(projTotalHours);
@@ -103,27 +105,27 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       row.isOverloaded = totalWeekLoad > totalWeeklyInstalledCapacity;
       return row;
     });
-  }, [workCenters, weeklyBuckets, activeProjects]);
+  }, [activeWorkCenters, weeklyBuckets, activeProjects]);
 
   const maxPlantWeeklyY = useMemo(() => {
-    const totalWeeklyInstalledCapacity = workCenters.reduce(
+    const totalWeeklyInstalledCapacity = activeWorkCenters.reduce(
       (acc, wc) => acc + calculateWeeklyCapacity(wc),
       0
     );
     const maxDemand = Math.max(...plantWeeklyChartData.map((d) => d.totalLoad || 0), 0);
     const highest = Math.max(maxDemand, totalWeeklyInstalledCapacity);
     return Math.ceil((highest || 100) * 1.2);
-  }, [plantWeeklyChartData, workCenters]);
+  }, [plantWeeklyChartData, activeWorkCenters]);
 
   // Sector Groups Aggregated Load & Utilization
   const sectorSummaries: SectorGroupSummary[] = useMemo(() => {
     const allGroups = Array.from(
-      new Set([...sectorGroups, ...workCenters.map((wc) => getWorkCenterCategory(wc))])
+      new Set([...sectorGroups, ...activeWorkCenters.map((wc) => getWorkCenterCategory(wc))])
     );
 
     return allGroups
       .map((grp) => {
-        const groupWcs = workCenters.filter((wc) => getWorkCenterCategory(wc) === grp);
+        const groupWcs = activeWorkCenters.filter((wc) => getWorkCenterCategory(wc) === grp);
         if (groupWcs.length === 0) return null;
 
         const groupWcIds = new Set(groupWcs.map((wc) => wc.id));
@@ -187,7 +189,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         };
       })
       .filter((s): s is SectorGroupSummary => s !== null);
-  }, [sectorGroups, workCenters, summaries, weeklyBuckets]);
+  }, [sectorGroups, activeWorkCenters, summaries, weeklyBuckets]);
 
   // Top Critical Overloaded Work Centers (Ranked by peak utilization)
   const criticalWorkCenters = useMemo(() => {
@@ -560,16 +562,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
           <div className="space-y-2">
             {activeProjects.map((p) => {
-              let projectTotalHours = 0;
-              if (p.workCenterHours) {
-                for (const val of Object.values(p.workCenterHours)) {
-                  projectTotalHours += Number(val) || 0;
-                }
-              } else if (p.workloads) {
-                for (const w of p.workloads) {
-                  projectTotalHours += Number(w.totalHours) || 0;
-                }
-              }
+              const projectTotalHours = getProjectTotalHours(p, activeWorkCenters);
               const pctOfPlant = kpis.totalRequiredHours > 0
                 ? ((projectTotalHours / kpis.totalRequiredHours) * 100).toFixed(1)
                 : '0';

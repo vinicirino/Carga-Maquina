@@ -25,6 +25,8 @@ import {
   X,
   Flame,
   TrendingUp,
+  Database,
+  Star,
 } from 'lucide-react';
 import { PlanningScenario } from '../types';
 
@@ -38,6 +40,7 @@ interface SidebarProps {
   onOpenTurbineProjectModal: () => void;
   onOpenMatrixModal?: () => void;
   onResetData: () => void;
+  onSaveAsBaseline?: () => void;
   overloadCount: number;
   // Scenario Props
   scenarios: PlanningScenario[];
@@ -61,6 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenTurbineProjectModal,
   onOpenMatrixModal,
   onResetData,
+  onSaveAsBaseline,
   overloadCount,
   scenarios,
   activeScenarioId,
@@ -426,16 +430,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer / Reset / Info */}
-      <div className="p-3 border-t border-slate-800/90 bg-slate-950/40 shrink-0">
+      <div className="p-3 border-t border-slate-800/90 bg-slate-950/40 shrink-0 space-y-1.5">
+        {onSaveAsBaseline && (
+          <button
+            onClick={onSaveAsBaseline}
+            title="Salvar Estado Atual como Base Primária (Baseline Padrão de Inicialização)"
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-500/30 transition-colors cursor-pointer ${
+              isCollapsed ? 'justify-center px-2' : ''
+            }`}
+          >
+            <Star className="w-4 h-4 text-amber-400 fill-amber-400 shrink-0" />
+            {!isCollapsed && <span className="truncate">Definir como Base Primária</span>}
+          </button>
+        )}
+
         <button
           onClick={onResetData}
           title="Restaurar Dados Iniciais de Fábrica"
-          className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/30 transition-colors cursor-pointer ${
+          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/30 transition-colors cursor-pointer ${
             isCollapsed ? 'justify-center px-2' : ''
           }`}
         >
-          <RotateCcw className="w-4 h-4 shrink-0" />
-          {!isCollapsed && <span className="truncate">Restaurar Dados Padrão</span>}
+          <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+          {!isCollapsed && <span className="truncate">Restaurar Base Padrão</span>}
         </button>
       </div>
     </div>

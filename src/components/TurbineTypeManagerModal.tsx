@@ -92,45 +92,44 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     OUTROS: '#64748b',
   };
 
-  // Compute all available sector groups from system configuration
+  // Compute available sector groups STRICTLY from registered work centers
   const allKnownSectorGroups = useMemo(() => {
     const set = new Set<string>();
 
-    // 1. Defaults
-    DEFAULT_SECTOR_GROUPS.forEach((s) => set.add(s.trim().toUpperCase()));
-
-    // 2. Props sectorGroups
-    sectorGroups.forEach((s) => {
-      if (s && s.trim()) set.add(s.trim().toUpperCase());
-    });
-
-    // 3. Work centers categories
+    // Scan all registered work centers
     workCenters.forEach((wc) => {
       const cat = getWorkCenterCategory(wc);
-      if (cat && cat.trim()) set.add(cat.trim().toUpperCase());
-    });
-
-    // 4. Current turbine curves
-    typesList.forEach((t) => {
-      if (t.sectorCurves) {
-        Object.keys(t.sectorCurves).forEach((k) => {
-          if (k && k.trim()) set.add(k.trim().toUpperCase());
-        });
+      if (cat && cat.trim()) {
+        set.add(cat.trim().toUpperCase());
       }
     });
 
+    // Fallback only if no work centers exist in the database yet
+    if (set.size === 0) {
+      if (sectorGroups && sectorGroups.length > 0) {
+        sectorGroups.forEach((s) => {
+          if (s && s.trim()) set.add(s.trim().toUpperCase());
+        });
+      } else {
+        DEFAULT_SECTOR_GROUPS.forEach((s) => set.add(s.trim().toUpperCase()));
+      }
+    }
+
     return Array.from(set);
-  }, [sectorGroups, workCenters, typesList]);
+  }, [workCenters, sectorGroups]);
 
   const currentType = typesList.find((t) => t.id === selectedTypeId) || typesList[0];
 
-  // Helper to ensure currentType has all known sector groups
+  // Helper to ensure currentType has ONLY the known sector groups present in work centers
   const enrichedSectorCurves: Record<string, SectorCurveConfig> = useMemo(() => {
     if (!currentType) return {};
-    const curves = { ...(currentType.sectorCurves || {}) };
+    const existingCurves = currentType.sectorCurves || {};
+    const curves: Record<string, SectorCurveConfig> = {};
 
     allKnownSectorGroups.forEach((secName) => {
-      if (!curves[secName]) {
+      if (existingCurves[secName]) {
+        curves[secName] = existingCurves[secName];
+      } else {
         curves[secName] = {
           sectorName: secName,
           percentage: 0,
@@ -390,7 +389,12 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
   const handleNormalizeWeightsTo100 = () => {
     if (!currentType) return;
     const entries = Object.entries(enrichedSectorCurves);
-    const sum = entries.reduce((acc, [_, c]) => acc + (c.percentage || 0), 0);
+    const effectiveWeights = entries.map(([secName, c]) => ({
+      secName,
+      config: c,
+      effectiveWeight: (c.percentage || 0) * (c.volumeGain || 1.0),
+    }));
+    const sum = effectiveWeights.reduce((acc, curr) => acc + curr.effectiveWeight, 0);
 
     if (sum === 0) {
       handleDistributeEqually();
@@ -399,22 +403,39 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
 
     const normalizedCurves: Record<string, SectorCurveConfig> = {};
     let runningSum = 0;
+    const nonZeroEntries = effectiveWeights.filter((item) => item.effectiveWeight > 0);
 
-    entries.forEach(([secName, c], idx) => {
-      if (idx === entries.length - 1) {
-        normalizedCurves[secName] = {
-          ...c,
-          percentage: Number(Math.max(0, 100 - runningSum).toFixed(1)),
-        };
-      } else {
-        const scaled = Number(((c.percentage / sum) * 100).toFixed(1));
+    effectiveWeights.forEach(({ secName, config, effectiveWeight }) => {
+      if (effectiveWeight > 0) {
+        const scaled = Number(((effectiveWeight / sum) * 100).toFixed(1));
         runningSum += scaled;
         normalizedCurves[secName] = {
-          ...c,
+          ...config,
           percentage: scaled,
+          volumeGain: 1.0,
+        };
+      } else {
+        normalizedCurves[secName] = {
+          ...config,
+          percentage: 0,
+          volumeGain: 1.0,
         };
       }
     });
+
+    if (nonZeroEntries.length > 0) {
+      const diff = Number((100 - runningSum).toFixed(1));
+      if (Math.abs(diff) > 0.001) {
+        const largest = nonZeroEntries.reduce((max, cur) =>
+          cur.effectiveWeight > max.effectiveWeight ? cur : max
+        );
+        if (normalizedCurves[largest.secName]) {
+          normalizedCurves[largest.secName].percentage = Number(
+            (normalizedCurves[largest.secName].percentage + diff).toFixed(1)
+          );
+        }
+      }
+    }
 
     handleUpdateCurrentType({
       ...currentType,
@@ -501,13 +522,23 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
       }
     }
 
-    // Check if total weights differ significantly from 100% or total hours exceed baseTargetHours
-    if (Math.abs(totalBaseWeightSum - 100) > 0.5) {
+    // Check if total weights differ from 100% or total calculated hours differ from baseTargetHours
+    const effectiveWeightSum = Object.values(enrichedSectorCurves).reduce(
+      (acc, c) => acc + (c.percentage || 0) * (c.volumeGain || 1.0),
+      0
+    );
+    const roundedEffectiveWeightSum = Number(effectiveWeightSum.toFixed(1));
+
+    if (
+      Math.abs(totalBaseWeightSum - 100) > 0.1 ||
+      Math.abs(roundedEffectiveWeightSum - 100) > 0.1 ||
+      totalCalculatedSectorHours !== baseTargetHours
+    ) {
       setConfirmationDialog({
         isOpen: true,
         calculatedTotal: totalCalculatedSectorHours,
         baseTotal: baseTargetHours,
-        weightSum: totalBaseWeightSum,
+        weightSum: roundedEffectiveWeightSum !== 100 ? roundedEffectiveWeightSum : totalBaseWeightSum,
       });
       return;
     }
@@ -517,12 +548,63 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     onClose();
   };
 
+  // Save with updated base hours AND recalculate all sector base weights & load volumes to strictly 100%
   const handleConfirmSaveWithUpdatedBase = () => {
     if (!currentType || !confirmationDialog) return;
-    const newBase = confirmationDialog.calculatedTotal;
+    const newBase = confirmationDialog.calculatedTotal > 0 ? confirmationDialog.calculatedTotal : baseTargetHours;
+
+    const newCurves: Record<string, SectorCurveConfig> = {};
+    const entries = Object.entries(enrichedSectorCurves);
+    let runningPctSum = 0;
+
+    const activeEntries = entries.filter(([name]) => (sectorCalculatedHoursMap[name] || 0) > 0);
+
+    entries.forEach(([secName, cfg]) => {
+      const secHours = sectorCalculatedHoursMap[secName] || 0;
+      if (newBase > 0 && secHours > 0) {
+        const rawPct = (secHours / newBase) * 100;
+        const roundedPct = Number(rawPct.toFixed(1));
+        runningPctSum += roundedPct;
+        newCurves[secName] = {
+          ...cfg,
+          percentage: roundedPct,
+          volumeGain: 1.0, // Volume de carga normalizado em 1.0 (100%)
+        };
+      } else {
+        newCurves[secName] = {
+          ...cfg,
+          percentage: 0,
+          volumeGain: 1.0,
+        };
+      }
+    });
+
+    // Guarantee exact 100.0% sum
+    if (activeEntries.length > 0) {
+      const diff = Number((100 - runningPctSum).toFixed(1));
+      if (Math.abs(diff) > 0.001) {
+        const largestSecName = activeEntries.reduce((maxName, [curName]) => {
+          const maxHrs = sectorCalculatedHoursMap[maxName] || 0;
+          const curHrs = sectorCalculatedHoursMap[curName] || 0;
+          return curHrs > maxHrs ? curName : maxName;
+        }, activeEntries[0][0]);
+
+        if (newCurves[largestSecName]) {
+          newCurves[largestSecName].percentage = Number(
+            (newCurves[largestSecName].percentage + diff).toFixed(1)
+          );
+        }
+      }
+    }
 
     const updatedList = typesList.map((t) =>
-      t.id === currentType.id ? { ...t, defaultHoursPerTurbine: newBase } : t
+      t.id === currentType.id
+        ? {
+            ...t,
+            defaultHoursPerTurbine: newBase,
+            sectorCurves: newCurves,
+          }
+        : t
     );
 
     setTypesList(updatedList);
@@ -531,8 +613,67 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     onClose();
   };
 
+  // Save keeping original base hours AND normalize sector base weights to strictly 100%
   const handleConfirmSaveKeepOriginalBase = () => {
-    onSaveTurbineTypes(typesList);
+    if (!currentType || !confirmationDialog) return;
+    const keepBase = confirmationDialog.baseTotal > 0 ? confirmationDialog.baseTotal : 10000;
+
+    const newCurves: Record<string, SectorCurveConfig> = {};
+    const entries = Object.entries(enrichedSectorCurves);
+    let runningPctSum = 0;
+    const totalCalcHours = totalCalculatedSectorHours > 0 ? totalCalculatedSectorHours : keepBase;
+    const activeEntries = entries.filter(([name]) => (sectorCalculatedHoursMap[name] || 0) > 0);
+
+    entries.forEach(([secName, cfg]) => {
+      const secHours = sectorCalculatedHoursMap[secName] || 0;
+      if (totalCalcHours > 0 && secHours > 0) {
+        const rawPct = (secHours / totalCalcHours) * 100;
+        const roundedPct = Number(rawPct.toFixed(1));
+        runningPctSum += roundedPct;
+        newCurves[secName] = {
+          ...cfg,
+          percentage: roundedPct,
+          volumeGain: 1.0, // Volume de carga normalizado em 1.0 (100%)
+        };
+      } else {
+        newCurves[secName] = {
+          ...cfg,
+          percentage: 0,
+          volumeGain: 1.0,
+        };
+      }
+    });
+
+    // Guarantee exact 100.0% sum
+    if (activeEntries.length > 0) {
+      const diff = Number((100 - runningPctSum).toFixed(1));
+      if (Math.abs(diff) > 0.001) {
+        const largestSecName = activeEntries.reduce((maxName, [curName]) => {
+          const maxHrs = sectorCalculatedHoursMap[maxName] || 0;
+          const curHrs = sectorCalculatedHoursMap[curName] || 0;
+          return curHrs > maxHrs ? curName : maxName;
+        }, activeEntries[0][0]);
+
+        if (newCurves[largestSecName]) {
+          newCurves[largestSecName].percentage = Number(
+            (newCurves[largestSecName].percentage + diff).toFixed(1)
+          );
+        }
+      }
+    }
+
+    const updatedList = typesList.map((t) =>
+      t.id === currentType.id
+        ? {
+            ...t,
+            defaultHoursPerTurbine: keepBase,
+            sectorCurves: newCurves,
+          }
+        : t
+    );
+
+    setTypesList(updatedList);
+    onSaveTurbineTypes(updatedList);
     setConfirmationDialog(null);
     onClose();
   };
@@ -1005,10 +1146,10 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                     <div>
                       <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                         <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Parametrização por Setor ({filteredSectorEntries.length} Grupos)</span>
+                        <span>Parametrização por Setor ({filteredSectorEntries.length} Grupos dos Centros de Trabalho)</span>
                       </h4>
                       <p className="text-[10px] text-slate-500 mt-0.5">
-                        Defina <strong>Início no Cronograma</strong> e <strong>Espalhamento/Duração</strong> para cada centro.
+                        Agrupadores sincronizados com o cadastro de centros de trabalho. Defina <strong>Início</strong> e <strong>Duração</strong> para cada grupo.
                       </p>
                     </div>
 
@@ -1219,6 +1360,10 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
               </strong>
               ?
             </p>
+
+            <div className="bg-indigo-50/70 p-2.5 rounded-lg border border-indigo-100 text-[11px] text-indigo-900 leading-relaxed">
+              💡 <strong>Ajuste Automático:</strong> Ao selecionar qualquer uma das opções, o sistema recalculará os <strong>pesos base (%)</strong> e os <strong>volumes de carga</strong> de cada agrupador/setor, ajustando o somatório total para <strong>exatamente 100%</strong>.
+            </div>
 
             <div className="flex flex-col gap-2 pt-2">
               <button
