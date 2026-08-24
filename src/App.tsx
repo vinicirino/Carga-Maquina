@@ -20,6 +20,7 @@ import { CustomTurbineProjectModal } from './components/CustomTurbineProjectModa
 import { NewScenarioModal } from './components/NewScenarioModal';
 import { ScenarioManagerModal } from './components/ScenarioManagerModal';
 import { ScenarioComparisonModal } from './components/ScenarioComparisonModal';
+import { DatabaseResetModal } from './components/DatabaseResetModal';
 import { TurbineType } from './types/turbine';
 import { DEFAULT_TURBINE_TYPES } from './data/defaultTurbines';
 import {
@@ -136,6 +137,21 @@ export default function App() {
   const [isNewScenarioModalOpen, setIsNewScenarioModalOpen] = useState(false);
   const [isScenarioManagerModalOpen, setIsScenarioManagerModalOpen] = useState(false);
   const [isScenarioCompareModalOpen, setIsScenarioCompareModalOpen] = useState(false);
+  const [isDbResetModalOpen, setIsDbResetModalOpen] = useState(false);
+
+  // Check if an official baseline exists in localStorage
+  const hasOfficialBaseline = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('carga_maquina_primary_baseline_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Boolean(parsed && parsed.scenarios && parsed.scenarios.length > 0);
+      }
+    } catch {
+      return false;
+    }
+    return false;
+  }, [scenarios]);
 
   // Save scenarios array to localStorage
   useEffect(() => {
@@ -667,45 +683,91 @@ export default function App() {
   };
 
   const handleResetData = () => {
+    setIsDbResetModalOpen(true);
+  };
+
+  const handleResetToDemo = () => {
+    const inits = getInitialScenarios();
+    setScenarios(inits);
+    const first = inits[0];
+    setActiveScenarioId(first.id);
+    setWorkCenters(first.workCenters);
+    setProjects(first.projects);
+    setSectorGroups(first.sectorGroups);
+  };
+
+  const handleResetToCleanCompanyState = () => {
+    const cleanWcs = INITIAL_DATA.workCenters.map((wc) => ({
+      ...wc,
+      resourcesCount: 1,
+      dailyHours: 8,
+      daysPerWeek: 5,
+      efficiencyPercentage: 100,
+    }));
+    const cleanProjects: Project[] = [];
+    const cleanScenarios: PlanningScenario[] = [
+      {
+        id: 'scen-1-empresa-base',
+        name: 'Cenário 1: Base Operacional da Empresa (Principal)',
+        description: 'Base limpa e oficial para cadastro e importação dos projetos e centros de trabalho da empresa.',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isBaseline: true,
+        workCenters: cleanWcs,
+        projects: cleanProjects,
+        sectorGroups: DEFAULT_SECTOR_GROUPS,
+      },
+      {
+        id: 'scen-2-expansao-turno',
+        name: 'Cenário 2: Turno Extra / Expansão',
+        description: 'Cenário de simulação para turno estendido ou acréscimo de postos.',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        workCenters: cleanWcs,
+        projects: cleanProjects,
+        sectorGroups: DEFAULT_SECTOR_GROUPS,
+      },
+      {
+        id: 'scen-3-simulacao-prazos',
+        name: 'Cenário 3: Simulação de Prazos & Setores',
+        description: 'Cenário de simulação para ajuste de datas e balanceamento de gargalos.',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        workCenters: cleanWcs,
+        projects: cleanProjects,
+        sectorGroups: DEFAULT_SECTOR_GROUPS,
+      },
+    ];
+    setScenarios(cleanScenarios);
+    setActiveScenarioId('scen-1-empresa-base');
+    setWorkCenters(cleanWcs);
+    setProjects(cleanProjects);
+    setSectorGroups(DEFAULT_SECTOR_GROUPS);
+  };
+
+  const handleRestoreOfficialBaseline = () => {
     try {
-      const savedPrimaryBaseline = localStorage.getItem('carga_maquina_primary_baseline_v1');
-      if (savedPrimaryBaseline) {
-        const parsed = JSON.parse(savedPrimaryBaseline);
+      const saved = localStorage.getItem('carga_maquina_primary_baseline_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
         if (parsed && parsed.scenarios && parsed.scenarios.length > 0) {
-          if (
-            window.confirm(
-              'Deseja restaurar para a sua Base Primária Oficial salva?\n(Clique em "Cancelar" se desejar restaurar para os dados padrão originais de fábrica)'
-            )
-          ) {
-            setScenarios(parsed.scenarios);
-            const targetId = parsed.activeScenarioId || parsed.scenarios[0].id;
-            setActiveScenarioId(targetId);
-            const target = parsed.scenarios.find((s: any) => s.id === targetId) || parsed.scenarios[0];
-            setWorkCenters(target.workCenters);
-            setProjects(target.projects);
-            setSectorGroups(target.sectorGroups || DEFAULT_SECTOR_GROUPS);
-            alert('✅ Dados restaurados para a sua Base Primária Oficial!');
-            return;
-          }
+          setScenarios(parsed.scenarios);
+          const targetId = parsed.activeScenarioId || parsed.scenarios[0].id;
+          setActiveScenarioId(targetId);
+          const target = parsed.scenarios.find((s: any) => s.id === targetId) || parsed.scenarios[0];
+          setWorkCenters(target.workCenters);
+          setProjects(target.projects);
+          setSectorGroups(target.sectorGroups || DEFAULT_SECTOR_GROUPS);
         }
       }
     } catch (e) {
       console.error('Error loading baseline', e);
     }
+  };
 
-    if (
-      window.confirm(
-        'Deseja restaurar os cenários padrão de fábrica com os dados originais?'
-      )
-    ) {
-      const inits = getInitialScenarios();
-      setScenarios(inits);
-      const first = inits[0];
-      setActiveScenarioId(first.id);
-      setWorkCenters(first.workCenters);
-      setProjects(first.projects);
-      setSectorGroups(first.sectorGroups);
-    }
+  const handleHardClearStorage = () => {
+    localStorage.clear();
+    window.location.reload();
   };
 
   const handleApplySingleRecommendation = (wcId: string, newResources: number) => {
@@ -951,6 +1013,18 @@ export default function App() {
         scenarios={scenarios}
         activeScenarioId={activeScenarioId}
         onSelectScenario={handleSelectScenario}
+      />
+
+      <DatabaseResetModal
+        isOpen={isDbResetModalOpen}
+        onClose={() => setIsDbResetModalOpen(false)}
+        onResetToDemo={handleResetToDemo}
+        onResetToCleanCompanyState={handleResetToCleanCompanyState}
+        onRestoreOfficialBaseline={handleRestoreOfficialBaseline}
+        onHardClearStorage={handleHardClearStorage}
+        hasOfficialBaseline={hasOfficialBaseline}
+        currentProjectsCount={projects.length}
+        currentWorkCentersCount={workCenters.length}
       />
     </div>
   );

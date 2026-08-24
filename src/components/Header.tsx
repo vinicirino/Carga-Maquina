@@ -105,7 +105,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={onResetData}
-              title="Restaurar Dados Iniciais"
+              title="Gestão e Limpeza do Banco de Dados / Inicializar Produção"
               className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
