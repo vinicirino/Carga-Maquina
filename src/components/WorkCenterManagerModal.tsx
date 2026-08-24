@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { WorkCenter, Project } from '../types';
 import { TurbineType, SectorCurveConfig } from '../types/turbine';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
+import { getWorkCenterAllocatedHours } from '../utils/calculator';
 import {
   X,
   Plus,
@@ -645,6 +646,27 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                                   isEnabled ? 'text-slate-900' : 'text-slate-500 line-through'
                                 }`}
                               />
+                              {(() => {
+                                const allocated = getWorkCenterAllocatedHours(wc, projects);
+                                if (allocated > 0) {
+                                  return (
+                                    <span
+                                      className="px-1.5 py-0.5 rounded text-[9px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200 shrink-0"
+                                      title={`Possui ${Math.round(allocated).toLocaleString()}h alocadas em projetos neste cenário`}
+                                    >
+                                      {Math.round(allocated).toLocaleString()}h
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-400 bg-slate-100 shrink-0"
+                                    title="Sem carga alocada no cenário ativo"
+                                  >
+                                    0h
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </td>
 

@@ -29,6 +29,38 @@ export function calculateDailyCapacity(wc: WorkCenter): number {
   return wc.dailyHours * wc.resourcesCount * (wc.efficiencyPercentage / 100);
 }
 
+/**
+ * Calculates total allocated hours for a specific work center across active projects.
+ * Returns 0 if the work center has no hours assigned in any active project.
+ */
+export function getWorkCenterAllocatedHours(wc: WorkCenter, projects: Project[]): number {
+  const activeProjects = projects.filter((p) => p.enabled !== false);
+  let totalHours = 0;
+  const wcNorm = wc.name.trim().toUpperCase();
+
+  for (const proj of activeProjects) {
+    if (!proj.workCenterHours) continue;
+    let hrs = 0;
+    if (typeof proj.workCenterHours[wc.id] === 'number' && !isNaN(proj.workCenterHours[wc.id])) {
+      hrs = proj.workCenterHours[wc.id];
+    } else if (typeof proj.workCenterHours[wc.name] === 'number' && !isNaN(proj.workCenterHours[wc.name])) {
+      hrs = proj.workCenterHours[wc.name];
+    } else {
+      for (const [k, v] of Object.entries(proj.workCenterHours)) {
+        if (typeof v === 'number' && !isNaN(v) && k.trim().toUpperCase() === wcNorm) {
+          hrs = v;
+          break;
+        }
+      }
+    }
+    if (hrs > 0) {
+      totalHours += hrs;
+    }
+  }
+
+  return totalHours;
+}
+
 const MS_PER_DAY = 86400000;
 
 export function generateWeeklySchedule(
@@ -50,7 +82,13 @@ export function generateWeeklySchedule(
   };
 } {
   const activeProjects = projects.filter((p) => p.enabled !== false);
-  const activeWorkCenters = workCenters.filter((wc) => wc.enabled !== false);
+  const enabledWorkCenters = workCenters.filter((wc) => wc.enabled !== false);
+
+  // Filter: In this scenario, only work centers that are actively utilized in projects (hours > 0)
+  // are accounted for, listed and displayed in charts & sector groupers.
+  const activeWorkCenters = enabledWorkCenters.filter(
+    (wc) => getWorkCenterAllocatedHours(wc, activeProjects) > 0
+  );
 
   if (activeProjects.length === 0 || activeWorkCenters.length === 0) {
     return {

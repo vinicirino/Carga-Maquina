@@ -75,7 +75,11 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onNavigateToSimulation,
 }) => {
   const activeProjects = useMemo(() => projects.filter((p) => p.enabled !== false), [projects]);
-  const activeWorkCenters = useMemo(() => workCenters.filter((wc) => wc.enabled !== false), [workCenters]);
+  const usedWcIds = useMemo(() => new Set(summaries.map((s) => s.workCenter.id)), [summaries]);
+  const activeWorkCenters = useMemo(
+    () => workCenters.filter((wc) => wc.enabled !== false && usedWcIds.has(wc.id)),
+    [workCenters, usedWcIds]
+  );
 
   // Aggregate Plant-wide Weekly Capacity & Demand Curve
   const plantWeeklyChartData = useMemo(() => {
@@ -137,6 +141,8 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           (acc, s) => acc + (s.totalRequiredHours || 0),
           0
         );
+
+        if (totalRequiredHours === 0) return null;
 
         let peakWeeklyLoad = 0;
         let overloadedWeeksCount = 0;
@@ -351,7 +357,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 }}
               />
               <ReferenceLine
-                y={workCenters.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0)}
+                y={activeWorkCenters.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0)}
                 stroke="#dc2626"
                 strokeDasharray="4 4"
                 strokeWidth={2}

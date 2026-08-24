@@ -193,12 +193,17 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
   const currentWeeklyBuckets = effectiveSchedule.weeklyBuckets;
   const currentSummaries = effectiveSchedule.workCenterSummaries;
 
-  const activeWorkCenters = useMemo(
-    () => workCenters.filter((wc) => wc.enabled !== false),
-    [workCenters]
+  const usedWcIds = useMemo(
+    () => new Set(currentSummaries.map((s) => s.workCenter.id)),
+    [currentSummaries]
   );
 
-  // Calculate sector group summaries (Aggregated) with fast index
+  const activeWorkCenters = useMemo(
+    () => workCenters.filter((wc) => wc.enabled !== false && usedWcIds.has(wc.id)),
+    [workCenters, usedWcIds]
+  );
+
+  // Calculate sector group summaries (Aggregated) with fast index - only for groups with active work centers in use
   const sectorSummaries: SectorGroupSummary[] = useMemo(() => {
     const allGroups = Array.from(
       new Set([...sectorGroups, ...activeWorkCenters.map((wc) => getWorkCenterCategory(wc))])
@@ -227,6 +232,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
           const s = summariesByWcId.get(wc.id);
           if (s) totalRequiredHours += s.totalRequiredHours || 0;
         }
+
+        if (totalRequiredHours === 0) return null;
 
         let peakWeeklyLoad = 0;
         let overloadedWeeksCount = 0;
@@ -707,7 +714,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     : 'bg-slate-200 text-slate-600'
                 }`}
               >
-                {workCenters.length} postos
+                {activeWorkCenters.length} em uso
               </span>
               {allFactorySummary.maxUtilizationPercentage > 100 && (
                 <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" title="Sobrecarga fabril detectada"></span>
@@ -1807,7 +1814,18 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-800">
-                {filteredIndividualSummaries.map((s) => {
+                {filteredIndividualSummaries.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-8 text-center text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-1.5">
+                        <Layers className="w-6 h-6 text-slate-400" />
+                        <span className="font-bold text-xs text-slate-700">Nenhum centro de trabalho com demanda alocada</span>
+                        <span className="text-[11px] text-slate-400">Centros sem horas alocadas em projetos neste cenário não são contabilizados.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredIndividualSummaries.map((s) => {
                   const wc = s.workCenter;
                   const isSelected = wc.id === selectedIndividualSummary?.workCenter.id;
                   const isOverloaded = s.maxUtilizationPercentage > 100;
@@ -1937,7 +1955,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                       </td>
                     </tr>
                   );
-                })}
+                })
+              )}
               </tbody>
             </table>
           </div>

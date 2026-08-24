@@ -25,6 +25,7 @@ interface ScenarioManagerModalProps {
   onDuplicateScenario: (id: string) => void;
   onDeleteScenario: (id: string) => void;
   onSaveCurrentAsPrimaryBaseline?: () => void;
+  onOpenNewScenarioModal?: () => void;
 }
 
 export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
@@ -38,6 +39,7 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
   onDuplicateScenario,
   onDeleteScenario,
   onSaveCurrentAsPrimaryBaseline,
+  onOpenNewScenarioModal,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -73,9 +75,23 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
 
         {/* List of Scenarios */}
         <div className="p-6 space-y-4 flex-1 overflow-y-auto">
-          <p className="text-xs text-slate-600 font-medium">
-            Alterne entre diferentes versões de capacidade e prazos para simular impactos no PCP, apresentar relatórios para a diretoria ou testar contratações e turnos extras.
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+            <p className="text-xs text-slate-600 font-medium">
+              Alterne entre diferentes versões de capacidade e prazos para simular impactos no PCP, testar contratações ou planejar carteiras do zero.
+            </p>
+            {onOpenNewScenarioModal && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenNewScenarioModal();
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 shadow-xs"
+              >
+                <GitBranch className="w-3.5 h-3.5" />
+                <span>+ Criar Novo Cenário</span>
+              </button>
+            )}
+          </div>
 
           <div className="space-y-3">
             {scenarios.map((scen) => {

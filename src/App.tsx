@@ -170,8 +170,26 @@ export default function App() {
 
   // Scenario Management Handlers
   const handleSelectScenario = (id: string) => {
-    const target = scenarios.find((s) => s.id === id);
+    if (id === activeScenarioId) return;
+
+    // 1. Snapshot current active scenario data into scenarios array so changes are preserved
+    const updatedScenarios = scenarios.map((s) => {
+      if (s.id === activeScenarioId) {
+        return {
+          ...s,
+          workCenters: JSON.parse(JSON.stringify(workCenters)),
+          projects: JSON.parse(JSON.stringify(projects)),
+          sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return s;
+    });
+
+    const target = updatedScenarios.find((s) => s.id === id);
     if (!target) return;
+
+    setScenarios(updatedScenarios);
     setActiveScenarioId(id);
     setWorkCenters(JSON.parse(JSON.stringify(target.workCenters)));
     setProjects(JSON.parse(JSON.stringify(target.projects)));
@@ -200,14 +218,37 @@ export default function App() {
     let sourceProjects = projects;
     let sourceGroups = sectorGroups;
 
-    if (sourceScenarioId !== 'current') {
+    if (sourceScenarioId === 'blank') {
+      // Cenário em branco: 0 projetos cadastrados, mantendo a estrutura dos centros de trabalho
+      sourceProjects = [];
+      sourceWcs = JSON.parse(JSON.stringify(workCenters));
+      sourceGroups = JSON.parse(JSON.stringify(sectorGroups));
+    } else if (sourceScenarioId === 'current') {
+      sourceProjects = JSON.parse(JSON.stringify(projects));
+      sourceWcs = JSON.parse(JSON.stringify(workCenters));
+      sourceGroups = JSON.parse(JSON.stringify(sectorGroups));
+    } else {
       const src = scenarios.find((s) => s.id === sourceScenarioId);
       if (src) {
-        sourceWcs = src.workCenters;
-        sourceProjects = src.projects;
-        sourceGroups = src.sectorGroups;
+        sourceWcs = JSON.parse(JSON.stringify(src.workCenters));
+        sourceProjects = JSON.parse(JSON.stringify(src.projects));
+        sourceGroups = JSON.parse(JSON.stringify(src.sectorGroups || sectorGroups));
       }
     }
+
+    // Snapshot current active scenario before creating the new one
+    const currentScenariosSnapshot = scenarios.map((s) => {
+      if (s.id === activeScenarioId) {
+        return {
+          ...s,
+          workCenters: JSON.parse(JSON.stringify(workCenters)),
+          projects: JSON.parse(JSON.stringify(projects)),
+          sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return s;
+    });
 
     const newScen: PlanningScenario = {
       id: `scen-${Date.now()}`,
@@ -220,7 +261,8 @@ export default function App() {
       sectorGroups: JSON.parse(JSON.stringify(sourceGroups)),
     };
 
-    setScenarios((prev) => [...prev, newScen]);
+    const nextScenarios = [...currentScenariosSnapshot, newScen];
+    setScenarios(nextScenarios);
     setActiveScenarioId(newScen.id);
     setWorkCenters(newScen.workCenters);
     setProjects(newScen.projects);
@@ -228,8 +270,30 @@ export default function App() {
   };
 
   const handleDuplicateScenario = (id: string) => {
-    const target = scenarios.find((s) => s.id === id) || activeScenario;
-    if (!target) return;
+    // Snapshot current active scenario
+    const currentScenariosSnapshot = scenarios.map((s) => {
+      if (s.id === activeScenarioId) {
+        return {
+          ...s,
+          workCenters: JSON.parse(JSON.stringify(workCenters)),
+          projects: JSON.parse(JSON.stringify(projects)),
+          sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return s;
+    });
+
+    const target = currentScenariosSnapshot.find((s) => s.id === id) || {
+      id,
+      name: 'Cenário',
+      description: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      workCenters,
+      projects,
+      sectorGroups,
+    };
 
     const dupScen: PlanningScenario = {
       ...JSON.parse(JSON.stringify(target)),
@@ -240,7 +304,8 @@ export default function App() {
       isBaseline: false,
     };
 
-    setScenarios((prev) => [...prev, dupScen]);
+    const nextScenarios = [...currentScenariosSnapshot, dupScen];
+    setScenarios(nextScenarios);
     setActiveScenarioId(dupScen.id);
     setWorkCenters(dupScen.workCenters);
     setProjects(dupScen.projects);
@@ -332,7 +397,15 @@ export default function App() {
     const trimmed = groupName.trim().toUpperCase();
     if (!trimmed) return;
     if (!sectorGroups.includes(trimmed)) {
-      setSectorGroups((prev) => [...prev, trimmed]);
+      const next = [...sectorGroups, trimmed];
+      setSectorGroups(next);
+      setScenarios((prev) =>
+        prev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, sectorGroups: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
     }
   };
 
@@ -341,10 +414,19 @@ export default function App() {
       alert('É necessário ter ao menos um agrupador cadastrado.');
       return;
     }
-    setSectorGroups((prev) => prev.filter((g) => g !== groupName));
-    const fallback = sectorGroups.find((g) => g !== groupName) || 'OUTROS';
-    setWorkCenters((prev) =>
-      prev.map((wc) => (wc.category === groupName ? { ...wc, category: fallback } : wc))
+    const nextGroups = sectorGroups.filter((g) => g !== groupName);
+    const fallback = nextGroups.find((g) => g !== groupName) || 'OUTROS';
+    const nextWcs = workCenters.map((wc) =>
+      wc.category === groupName ? { ...wc, category: fallback } : wc
+    );
+    setSectorGroups(nextGroups);
+    setWorkCenters(nextWcs);
+    setScenarios((prev) =>
+      prev.map((s) =>
+        s.id === activeScenarioId
+          ? { ...s, sectorGroups: nextGroups, workCenters: nextWcs, updatedAt: new Date().toISOString() }
+          : s
+      )
     );
   };
 
@@ -363,25 +445,72 @@ export default function App() {
 
   // Handlers
   const handleUpdateWorkCenter = (updated: WorkCenter) => {
-    setWorkCenters((prev) =>
-      prev.map((wc) => (wc.id === updated.id ? updated : wc))
+    setWorkCenters((prev) => {
+      const next = prev.map((wc) => (wc.id === updated.id ? updated : wc));
+      setScenarios((scenPrev) =>
+        scenPrev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
+      return next;
+    });
+  };
+
+  const handleSaveWorkCenters = (newWcs: WorkCenter[]) => {
+    setWorkCenters(newWcs);
+    setScenarios((prev) =>
+      prev.map((s) =>
+        s.id === activeScenarioId
+          ? { ...s, workCenters: newWcs, updatedAt: new Date().toISOString() }
+          : s
+      )
     );
   };
 
   const handleUpdateProject = (updated: Project) => {
     const cleanProject = sanitizeProjectSchedules(updated, workCenters);
-    setProjects((prev) =>
-      prev.map((p) => (p.id === cleanProject.id ? cleanProject : p))
-    );
+    setProjects((prev) => {
+      const next = prev.map((p) => (p.id === cleanProject.id ? cleanProject : p));
+      setScenarios((scenPrev) =>
+        scenPrev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, projects: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
+      return next;
+    });
   };
 
   const handleDeleteProject = (projectId: string) => {
-    setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    setProjects((prev) => {
+      const next = prev.filter((p) => p.id !== projectId);
+      setScenarios((scenPrev) =>
+        scenPrev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, projects: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
+      return next;
+    });
   };
 
   const handleAddProject = (newProject: Project) => {
     const cleanProject = sanitizeProjectSchedules(newProject, workCenters);
-    setProjects((prev) => [...prev, cleanProject]);
+    setProjects((prev) => {
+      const next = [...prev, cleanProject];
+      setScenarios((scenPrev) =>
+        scenPrev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, projects: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
+      return next;
+    });
   };
 
   const handleImportComplete = (payload: ImportPayload) => {
@@ -580,19 +709,35 @@ export default function App() {
   };
 
   const handleApplySingleRecommendation = (wcId: string, newResources: number) => {
-    setWorkCenters((prev) =>
-      prev.map((wc) => (wc.id === wcId ? { ...wc, resourcesCount: newResources } : wc))
-    );
+    setWorkCenters((prev) => {
+      const next = prev.map((wc) => (wc.id === wcId ? { ...wc, resourcesCount: newResources } : wc));
+      setScenarios((scenPrev) =>
+        scenPrev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
+      return next;
+    });
   };
 
   const handleApplyAllRecommendations = () => {
     const recMap = new Map(recommendations.map((r) => [r.workCenterId, r.recommendedResources]));
-    setWorkCenters((prev) =>
-      prev.map((wc) => {
+    setWorkCenters((prev) => {
+      const next = prev.map((wc) => {
         const recRecs = recMap.get(wc.id);
         return recRecs ? { ...wc, resourcesCount: recRecs } : wc;
-      })
-    );
+      });
+      setScenarios((scenPrev) =>
+        scenPrev.map((s) =>
+          s.id === activeScenarioId
+            ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
+            : s
+        )
+      );
+      return next;
+    });
     alert('Todos os recursos foram reajustados para cobrir a demanda máxima de cada centro de trabalho!');
   };
 
@@ -711,7 +856,7 @@ export default function App() {
               Sistema PCP - Análise de Carga Máquina & Capacidade Instalada
             </span>
             <span className="text-slate-400 text-[11px]">
-              Cenário Ativo: <strong className="text-slate-200">{activeScenario.name}</strong> ({workCenters.length} Centros | {projects.length} Projetos)
+              Cenário Ativo: <strong className="text-slate-200">{activeScenario.name}</strong> ({workCenterSummaries.length} Centros em uso de {workCenters.length} cadastrados | {projects.length} Projetos)
             </span>
           </div>
         </footer>
@@ -749,7 +894,7 @@ export default function App() {
         projects={projects}
         onAddSectorGroup={handleAddSectorGroup}
         onDeleteSectorGroup={handleDeleteSectorGroup}
-        onSaveWorkCenters={setWorkCenters}
+        onSaveWorkCenters={handleSaveWorkCenters}
         onUpdateTurbineTypes={handleSaveTurbineTypes}
       />
 
@@ -797,6 +942,7 @@ export default function App() {
         onDuplicateScenario={handleDuplicateScenario}
         onDeleteScenario={handleDeleteScenario}
         onSaveCurrentAsPrimaryBaseline={handleSaveAsPrimaryBaseline}
+        onOpenNewScenarioModal={() => setIsNewScenarioModalOpen(true)}
       />
 
       <ScenarioComparisonModal
