@@ -41,7 +41,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   ReferenceLine,
   LabelList,
@@ -153,6 +152,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
   const [projectShiftDays, setProjectShiftDays] = useState<number>(0);
   const deferredShiftDays = useDeferredValue(projectShiftDays);
   const [saveToast, setSaveToast] = useState<string | null>(null);
+  const [showAllLegends, setShowAllLegends] = useState(false);
 
   // Derived current simulated project ID (safe fallback without setState inside effect)
   const currentSimProjectId = useMemo(() => {
@@ -467,6 +467,32 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     if (highest === 0) return 100;
     return Math.ceil(highest * 1.2);
   }, [viewMode, currentGroupSummary, selectedIndividualSummary, chartData]);
+
+  // Projects that actively have hours in the current active group or work center
+  const projectsInCurrentView = useMemo(() => {
+    if (viewMode === 'GROUP') {
+      if (!currentGroupSummary) return [];
+      const groupWcIds = currentGroupSummary.workCenters.map((wc) => wc.id);
+      return effectiveProjects.filter((p) => {
+        if (p.enabled === false) return false;
+        return currentWeeklyBuckets.some((bucket) => {
+          for (const wcId of groupWcIds) {
+            if ((bucket.projectBreakdown[wcId]?.[p.id] || 0) > 0) return true;
+          }
+          return false;
+        });
+      });
+    } else {
+      if (!selectedIndividualSummary) return [];
+      const wcId = selectedIndividualSummary.workCenter.id;
+      return effectiveProjects.filter((p) => {
+        if (p.enabled === false) return false;
+        return currentWeeklyBuckets.some((bucket) => {
+          return (bucket.projectBreakdown[wcId]?.[p.id] || 0) > 0;
+        });
+      });
+    }
+  }, [viewMode, currentGroupSummary, selectedIndividualSummary, currentWeeklyBuckets, effectiveProjects]);
 
   // Impact metrics comparison: Original baseline vs Simulated shifted state
   const simulationImpact = useMemo(() => {
@@ -870,8 +896,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
             </div>
           </div>
 
-          {/* Recharts Stacked Weekly Demand vs Capacity Line */}
-          <div className="h-80 w-full pt-2">
+          {/* Recharts Stacked Weekly Demand vs Capacity Line - Dedicated Full-Height View */}
+          <div className="h-[390px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 30, right: 30, left: 10, bottom: 45 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -891,24 +917,82 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   unit="h"
                 />
                 <Tooltip
-                  formatter={(value: any, name: any) => {
-                    const proj = effectiveProjects.find((p) => p.id === name);
-                    const labelName = proj ? proj.name : name === 'capacity' ? 'Capacidade Semanal Consolidada' : name;
-                    return [`${Number(value || 0).toFixed(1)} h`, labelName];
-                  }}
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderColor: '#334155',
-                    borderRadius: '8px',
-                    color: '#f8fafc',
-                    fontSize: '12px',
-                  }}
-                />
-                <Legend
-                  wrapperStyle={{ paddingTop: '10px', fontSize: '11px' }}
-                  formatter={(value) => {
-                    const proj = effectiveProjects.find((p) => p.id === value);
-                    return proj ? proj.name : value;
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const dataRow = payload[0]?.payload;
+                    if (!dataRow) return null;
+
+                    const totalLoad = dataRow.totalLoad || 0;
+                    const capacity = dataRow.capacity || 0;
+                    const util = capacity > 0 ? (totalLoad / capacity) * 100 : 0;
+                    const isOver = capacity > 0 && totalLoad > capacity;
+
+                    const activeWeekProjects: { id: string; name: string; hours: number; color: string }[] = [];
+                    for (const proj of projectsInCurrentView) {
+                      const val = dataRow[proj.id] || 0;
+                      if (val > 0) {
+                        activeWeekProjects.push({
+                          id: proj.id,
+                          name: proj.name,
+                          hours: val,
+                          color: proj.color || '#6366f1',
+                        });
+                      }
+                    }
+                    activeWeekProjects.sort((a, b) => b.hours - a.hours);
+
+                    return (
+                      <div className="bg-slate-900/95 backdrop-blur-xs border border-slate-700 rounded-xl p-3 shadow-2xl text-xs text-slate-200 min-w-[260px] max-w-sm z-50">
+                        <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
+                          <span className="font-bold text-white text-sm">{dataRow.fullLabel || label}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-black ${
+                              isOver
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}
+                          >
+                            {util.toFixed(0)}% Ocupação
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-slate-300 mb-2">
+                          <div className="flex justify-between">
+                            <span>Demanda Total:</span>
+                            <strong className="text-white font-mono">{totalLoad.toFixed(1)}h</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Capacidade Consolidada:</span>
+                            <strong className="text-slate-400 font-mono">{capacity.toFixed(0)}h</strong>
+                          </div>
+                          {isOver && (
+                            <div className="text-rose-400 text-[11px] font-bold pt-1 border-t border-slate-800 flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                              <span>Sobrecarga de +{(totalLoad - capacity).toFixed(1)}h</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {activeWeekProjects.length > 0 && (
+                          <div className="pt-2 border-t border-slate-700/80">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">
+                              Projetos na Semana ({activeWeekProjects.length}):
+                            </span>
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                              {activeWeekProjects.map((p) => (
+                                <div key={p.id} className="flex items-center justify-between gap-2 text-[11px]">
+                                  <div className="flex items-center gap-1.5 truncate min-w-0">
+                                    <span className="w-2.5 h-2.5 rounded-xs shrink-0" style={{ backgroundColor: p.color }} />
+                                    <span className="truncate text-slate-300" title={p.name}>{p.name}</span>
+                                  </div>
+                                  <span className="font-mono font-bold text-white shrink-0">{p.hours.toFixed(1)}h</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
                   }}
                 />
 
@@ -927,18 +1011,19 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   strokeDasharray="4 4"
                 />
 
-                {/* Bars for each active project */}
+                {/* Bars for each project with demand */}
                 {(() => {
-                  return activeProjects.map((proj, idx) => {
-                    const isLast = idx === activeProjects.length - 1;
+                  const renderList = projectsInCurrentView.length > 0 ? projectsInCurrentView : activeProjects;
+                  return renderList.map((proj, idx) => {
+                    const isLast = idx === renderList.length - 1;
                     const isSimulated = proj.id === currentSimProjectId && projectShiftDays !== 0;
                     return (
                       <Bar
                         key={proj.id}
                         dataKey={proj.id}
-                        name={proj.id}
+                        name={proj.name}
                         stackId="a"
-                        fill={proj.color}
+                        fill={proj.color || `hsl(${(idx * 45) % 360}, 65%, 50%)`}
                         isAnimationActive={false}
                         stroke={isSimulated ? '#06b6d4' : undefined}
                         strokeWidth={isSimulated ? 2 : 0}
@@ -949,7 +1034,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                             dataKey="totalLoad"
                             position="top"
                             angle={-90}
-                            offset={12}
+                            offset={14}
                             textAnchor="start"
                             style={{ fontSize: '10px', fontWeight: 'bold', fill: '#334155' }}
                             formatter={(val: any) =>
@@ -963,6 +1048,77 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 })()}
               </BarChart>
             </ResponsiveContainer>
+          </div>
+
+          {/* External Legend & Reference Bar (Outside Chart to guarantee 100% chart height & visibility) */}
+          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-4 text-slate-600 flex-wrap">
+                {/* Capacity Reference Legend */}
+                <div className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 border-t-2 border-dashed border-red-600"></span>
+                  <span className="font-semibold text-slate-700 text-[11px]">
+                    Capacidade Consolidada:{' '}
+                    <strong className="text-red-700 font-bold">
+                      {Math.round(currentGroupSummary.weeklyCapacity || 0).toLocaleString()}h/sem
+                    </strong>
+                  </span>
+                </div>
+
+                {/* Projects Count */}
+                <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
+                  <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>
+                    <strong className="text-slate-800 font-bold">{projectsInCurrentView.length}</strong> projeto(s) com carga neste agrupador
+                  </span>
+                </div>
+              </div>
+
+              {projectsInCurrentView.length > 8 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllLegends(!showAllLegends)}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer bg-indigo-50/70 hover:bg-indigo-100/70 px-2 py-0.5 rounded-md border border-indigo-200 transition-colors"
+                >
+                  <span>{showAllLegends ? 'Ocultar Legenda Detalhada' : `Ver Legenda Completa (${projectsInCurrentView.length} projetos)`}</span>
+                  {showAllLegends ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                </button>
+              )}
+            </div>
+
+            {/* Legend Chips */}
+            {projectsInCurrentView.length > 0 && (
+              <div
+                className={`flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600 transition-all ${
+                  projectsInCurrentView.length > 8 && !showAllLegends
+                    ? 'max-h-14 overflow-hidden'
+                    : 'max-h-48 overflow-y-auto p-1.5 bg-slate-50/80 rounded-lg border border-slate-200/80'
+                }`}
+              >
+                {(projectsInCurrentView.length > 8 && !showAllLegends
+                  ? projectsInCurrentView.slice(0, 8)
+                  : projectsInCurrentView
+                ).map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-2xs shrink-0 max-w-[220px]"
+                    title={p.name}
+                  >
+                    <span className="w-2.5 h-2.5 rounded-xs shrink-0" style={{ backgroundColor: p.color || '#6366f1' }} />
+                    <span className="truncate text-slate-700 font-medium text-[11px]">{p.name}</span>
+                  </div>
+                ))}
+                {projectsInCurrentView.length > 8 && !showAllLegends && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllLegends(true)}
+                    className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                  >
+                    +{projectsInCurrentView.length - 8} mais...
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Quick breakdown of work centers inside the selected group */}
@@ -1129,8 +1285,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
             </div>
           </div>
 
-          {/* Recharts Stacked Weekly Demand vs Capacity Line */}
-          <div className="h-80 w-full pt-2">
+          {/* Recharts Stacked Weekly Demand vs Capacity Line - Dedicated Full-Height View */}
+          <div className="h-[390px] w-full pt-2">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 30, right: 30, left: 10, bottom: 45 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -1150,24 +1306,82 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   unit="h"
                 />
                 <Tooltip
-                  formatter={(value: any, name: any) => {
-                    const proj = effectiveProjects.find((p) => p.id === name);
-                    const labelName = proj ? proj.name : name === 'capacity' ? 'Capacidade Semanal' : name;
-                    return [`${Number(value || 0).toFixed(1)} h`, labelName];
-                  }}
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderColor: '#334155',
-                    borderRadius: '8px',
-                    color: '#f8fafc',
-                    fontSize: '12px',
-                  }}
-                />
-                <Legend
-                  wrapperStyle={{ paddingTop: '10px', fontSize: '11px' }}
-                  formatter={(value) => {
-                    const proj = effectiveProjects.find((p) => p.id === value);
-                    return proj ? proj.name : value;
+                  content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const dataRow = payload[0]?.payload;
+                    if (!dataRow) return null;
+
+                    const totalLoad = dataRow.totalLoad || 0;
+                    const capacity = dataRow.capacity || 0;
+                    const util = capacity > 0 ? (totalLoad / capacity) * 100 : 0;
+                    const isOver = capacity > 0 && totalLoad > capacity;
+
+                    const activeWeekProjects: { id: string; name: string; hours: number; color: string }[] = [];
+                    for (const proj of projectsInCurrentView) {
+                      const val = dataRow[proj.id] || 0;
+                      if (val > 0) {
+                        activeWeekProjects.push({
+                          id: proj.id,
+                          name: proj.name,
+                          hours: val,
+                          color: proj.color || '#6366f1',
+                        });
+                      }
+                    }
+                    activeWeekProjects.sort((a, b) => b.hours - a.hours);
+
+                    return (
+                      <div className="bg-slate-900/95 backdrop-blur-xs border border-slate-700 rounded-xl p-3 shadow-2xl text-xs text-slate-200 min-w-[260px] max-w-sm z-50">
+                        <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
+                          <span className="font-bold text-white text-sm">{dataRow.fullLabel || label}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-black ${
+                              isOver
+                                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            }`}
+                          >
+                            {util.toFixed(0)}% Ocupação
+                          </span>
+                        </div>
+
+                        <div className="space-y-1 text-slate-300 mb-2">
+                          <div className="flex justify-between">
+                            <span>Demanda Total:</span>
+                            <strong className="text-white font-mono">{totalLoad.toFixed(1)}h</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Capacidade Líquida:</span>
+                            <strong className="text-slate-400 font-mono">{capacity.toFixed(0)}h</strong>
+                          </div>
+                          {isOver && (
+                            <div className="text-rose-400 text-[11px] font-bold pt-1 border-t border-slate-800 flex items-center gap-1">
+                              <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                              <span>Sobrecarga de +{(totalLoad - capacity).toFixed(1)}h</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {activeWeekProjects.length > 0 && (
+                          <div className="pt-2 border-t border-slate-700/80">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1.5">
+                              Projetos na Semana ({activeWeekProjects.length}):
+                            </span>
+                            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                              {activeWeekProjects.map((p) => (
+                                <div key={p.id} className="flex items-center justify-between gap-2 text-[11px]">
+                                  <div className="flex items-center gap-1.5 truncate min-w-0">
+                                    <span className="w-2.5 h-2.5 rounded-xs shrink-0" style={{ backgroundColor: p.color }} />
+                                    <span className="truncate text-slate-300" title={p.name}>{p.name}</span>
+                                  </div>
+                                  <span className="font-mono font-bold text-white shrink-0">{p.hours.toFixed(1)}h</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
                   }}
                 />
 
@@ -1186,18 +1400,19 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   strokeDasharray="4 4"
                 />
 
-                {/* Bars for each active project */}
+                {/* Bars for each project with demand */}
                 {(() => {
-                  return activeProjects.map((proj, idx) => {
-                    const isLast = idx === activeProjects.length - 1;
+                  const renderList = projectsInCurrentView.length > 0 ? projectsInCurrentView : activeProjects;
+                  return renderList.map((proj, idx) => {
+                    const isLast = idx === renderList.length - 1;
                     const isSimulated = proj.id === currentSimProjectId && projectShiftDays !== 0;
                     return (
                       <Bar
                         key={proj.id}
                         dataKey={proj.id}
-                        name={proj.id}
+                        name={proj.name}
                         stackId="a"
-                        fill={proj.color}
+                        fill={proj.color || `hsl(${(idx * 45) % 360}, 65%, 50%)`}
                         isAnimationActive={false}
                         stroke={isSimulated ? '#06b6d4' : undefined}
                         strokeWidth={isSimulated ? 2 : 0}
@@ -1208,7 +1423,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                             dataKey="totalLoad"
                             position="top"
                             angle={-90}
-                            offset={12}
+                            offset={14}
                             textAnchor="start"
                             style={{ fontSize: '10px', fontWeight: 'bold', fill: '#334155' }}
                             formatter={(val: any) =>
@@ -1222,6 +1437,77 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 })()}
               </BarChart>
             </ResponsiveContainer>
+          </div>
+
+          {/* External Legend & Reference Bar (Outside Chart to guarantee 100% chart height & visibility) */}
+          <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-4 text-slate-600 flex-wrap">
+                {/* Capacity Reference Legend */}
+                <div className="flex items-center gap-1.5">
+                  <span className="w-4 h-0.5 border-t-2 border-dashed border-red-600"></span>
+                  <span className="font-semibold text-slate-700 text-[11px]">
+                    Capacidade Líquida:{' '}
+                    <strong className="text-red-700 font-bold">
+                      {Math.round(selectedIndividualSummary.weeklyCapacity || 0).toLocaleString()}h/sem
+                    </strong>
+                  </span>
+                </div>
+
+                {/* Projects Count */}
+                <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
+                  <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>
+                    <strong className="text-slate-800 font-bold">{projectsInCurrentView.length}</strong> projeto(s) com carga neste posto
+                  </span>
+                </div>
+              </div>
+
+              {projectsInCurrentView.length > 8 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllLegends(!showAllLegends)}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer bg-indigo-50/70 hover:bg-indigo-100/70 px-2 py-0.5 rounded-md border border-indigo-200 transition-colors"
+                >
+                  <span>{showAllLegends ? 'Ocultar Legenda Detalhada' : `Ver Legenda Completa (${projectsInCurrentView.length} projetos)`}</span>
+                  {showAllLegends ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                </button>
+              )}
+            </div>
+
+            {/* Legend Chips */}
+            {projectsInCurrentView.length > 0 && (
+              <div
+                className={`flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600 transition-all ${
+                  projectsInCurrentView.length > 8 && !showAllLegends
+                    ? 'max-h-14 overflow-hidden'
+                    : 'max-h-48 overflow-y-auto p-1.5 bg-slate-50/80 rounded-lg border border-slate-200/80'
+                }`}
+              >
+                {(projectsInCurrentView.length > 8 && !showAllLegends
+                  ? projectsInCurrentView.slice(0, 8)
+                  : projectsInCurrentView
+                ).map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-md border border-slate-200 shadow-2xs shrink-0 max-w-[220px]"
+                    title={p.name}
+                  >
+                    <span className="w-2.5 h-2.5 rounded-xs shrink-0" style={{ backgroundColor: p.color || '#6366f1' }} />
+                    <span className="truncate text-slate-700 font-medium text-[11px]">{p.name}</span>
+                  </div>
+                ))}
+                {projectsInCurrentView.length > 8 && !showAllLegends && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllLegends(true)}
+                    className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md border border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                  >
+                    +{projectsInCurrentView.length - 8} mais...
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
