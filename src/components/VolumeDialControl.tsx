@@ -73,6 +73,11 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
         const raw = custom[wc.id] ?? custom[wc.name];
         shares[wc.id] = typeof raw === 'number' ? Math.round(raw) : 0;
       });
+    } else if (calculatedHours === 0 || percentage === 0) {
+      // Sector has 0 hours allocated - all work centers in this sector remain 0%
+      sectorWorkCenters.forEach((wc) => {
+        shares[wc.id] = 0;
+      });
     } else {
       // Default integer equal shares strictly summing to 100%
       const baseShare = Math.floor(100 / n);
@@ -83,11 +88,11 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     }
 
     return shares;
-  }, [sectorWorkCenters, config.customWorkCenterShares]);
+  }, [sectorWorkCenters, config.customWorkCenterShares, calculatedHours, percentage]);
 
   const totalWcShareSum = useMemo(() => {
     const vals = Object.values(wcShares);
-    if (vals.length === 0) return 100;
+    if (vals.length === 0) return 0;
     const sum = vals.reduce<number>((acc, v) => acc + (Math.round(Number(v)) || 0), 0);
     return Math.round(sum);
   }, [wcShares]);

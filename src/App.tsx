@@ -31,6 +31,10 @@ import {
   TrendingUp,
   BarChart2,
   Factory,
+  Star,
+  CheckCircle,
+  Info,
+  X,
 } from 'lucide-react';
 
 const STORAGE_KEY_WORKCENTERS = 'carga_maquina_workcenters_v1';
@@ -138,6 +142,15 @@ export default function App() {
   const [isScenarioManagerModalOpen, setIsScenarioManagerModalOpen] = useState(false);
   const [isScenarioCompareModalOpen, setIsScenarioCompareModalOpen] = useState(false);
   const [isDbResetModalOpen, setIsDbResetModalOpen] = useState(false);
+
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
+
+  const showToast = (text: string, type: 'success' | 'info' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4500);
+  };
 
   // Check if an official baseline exists in localStorage
   const hasOfficialBaseline = useMemo(() => {
@@ -339,12 +352,32 @@ export default function App() {
   };
 
   const handleSetBaselineScenario = (id: string) => {
-    setScenarios((prev) =>
-      prev.map((s) => ({
-        ...s,
-        isBaseline: s.id === id,
-      }))
-    );
+    const targetScen = scenarios.find((s) => s.id === id);
+    const updatedScenarios = scenarios.map((s) => ({
+      ...s,
+      isBaseline: s.id === id,
+    }));
+    setScenarios(updatedScenarios);
+
+    if (targetScen) {
+      try {
+        localStorage.setItem(STORAGE_KEY_SCENARIOS, JSON.stringify(updatedScenarios));
+        localStorage.setItem(
+          'carga_maquina_primary_baseline_v1',
+          JSON.stringify({
+            savedAt: new Date().toISOString(),
+            activeScenarioId: id,
+            workCenters: targetScen.workCenters,
+            projects: targetScen.projects,
+            sectorGroups: targetScen.sectorGroups,
+            scenarios: updatedScenarios,
+          })
+        );
+      } catch (e) {
+        console.error('Error setting baseline scenario:', e);
+      }
+      showToast(`⭐ Cenário "${targetScen.name}" definido como a Base Primária Oficial (Baseline do PCP)!`);
+    }
   };
 
   const handleSaveAsPrimaryBaseline = () => {
@@ -390,18 +423,47 @@ export default function App() {
       console.error('Error saving primary baseline:', e);
     }
 
-    alert('✅ As informações desta base foram salvas com sucesso como a Base Primária Oficial (Baseline do PCP)!');
+    const currentName = activeScenario?.name || 'Cenário Ativo';
+    showToast(`⭐ Base Primária Oficial Fixada! O estado atual de "${currentName}" é a referência padrão do PCP.`);
   };
 
   const handleDeleteScenario = (id: string) => {
-    if (scenarios.length <= 1) {
-      alert('É necessário manter pelo menos um cenário no sistema.');
+    const remaining = scenarios.filter((s) => s.id !== id);
+    if (remaining.length === 0) {
+      const cleanWcs = workCenters.map((wc) => ({
+        ...wc,
+        resourcesCount: 1,
+        dailyHours: 8,
+        daysPerWeek: 5,
+        efficiencyPercentage: 100,
+      }));
+      const fallback: PlanningScenario = {
+        id: `scen-${Date.now()}`,
+        name: 'Cenário Principal (PCP)',
+        description: 'Cenário limpo de planejamento',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isBaseline: true,
+        workCenters: cleanWcs,
+        projects: [],
+        sectorGroups: sectorGroups.length > 0 ? sectorGroups : DEFAULT_SECTOR_GROUPS,
+      };
+      setScenarios([fallback]);
+      setActiveScenarioId(fallback.id);
+      setWorkCenters(cleanWcs);
+      setProjects([]);
+      setSectorGroups(fallback.sectorGroups);
       return;
     }
-    const remaining = scenarios.filter((s) => s.id !== id);
-    setScenarios(remaining);
+
+    const hasBaseline = remaining.some((s) => s.isBaseline);
+    const updatedRemaining = !hasBaseline
+      ? remaining.map((s, idx) => (idx === 0 ? { ...s, isBaseline: true } : s))
+      : remaining;
+
+    setScenarios(updatedRemaining);
     if (activeScenarioId === id) {
-      const fallback = remaining[0];
+      const fallback = updatedRemaining[0];
       setActiveScenarioId(fallback.id);
       setWorkCenters(JSON.parse(JSON.stringify(fallback.workCenters)));
       setProjects(JSON.parse(JSON.stringify(fallback.projects)));
@@ -427,7 +489,7 @@ export default function App() {
 
   const handleDeleteSectorGroup = (groupName: string) => {
     if (sectorGroups.length <= 1) {
-      alert('É necessário ter ao menos um agrupador cadastrado.');
+      showToast('É necessário ter ao menos um agrupador cadastrado.', 'info');
       return;
     }
     const nextGroups = sectorGroups.filter((g) => g !== groupName);
@@ -800,7 +862,7 @@ export default function App() {
       );
       return next;
     });
-    alert('Todos os recursos foram reajustados para cobrir a demanda máxima de cada centro de trabalho!');
+    showToast('Todos os recursos foram reajustados para cobrir a demanda máxima de cada centro de trabalho!');
   };
 
   const activeProjectsCount = projects.filter((p) => p.enabled !== false).length;
@@ -1026,6 +1088,30 @@ export default function App() {
         currentProjectsCount={projects.length}
         currentWorkCentersCount={workCenters.length}
       />
+
+      {/* Floating Global Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-5 right-5 z-50 max-w-md animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className="flex items-center gap-3 px-4 py-3 bg-slate-900 text-white rounded-xl shadow-2xl border border-slate-700">
+            <div className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg shrink-0">
+              {toastMessage.type === 'success' ? (
+                <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+              ) : (
+                <Info className="w-5 h-5 text-indigo-400" />
+              )}
+            </div>
+            <p className="text-xs font-semibold text-slate-100 flex-1 leading-snug">
+              {toastMessage.text}
+            </p>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="p-1 text-slate-400 hover:text-white rounded-md transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -114,9 +114,26 @@ export function calculateTurbineProject(
     staggeringMode = 'STAGGERED',
     staggerOffsetWeeks = 4,
     customSectorCurves,
+    customWorkCenterHours,
   } = config;
 
-  const totalHours = Math.max(1, (hoursPerTurbine || 10000) * Math.max(1, quantity));
+  const hasCustomWcHours = Boolean(
+    customWorkCenterHours && Object.keys(customWorkCenterHours).length > 0
+  );
+
+  let totalHours = 0;
+  if (hasCustomWcHours) {
+    totalHours = Object.values(customWorkCenterHours!).reduce((sum, h) => {
+      const num = typeof h === 'number' && !isNaN(h) ? h : 0;
+      return sum + num;
+    }, 0);
+    if (totalHours <= 0) {
+      totalHours = Math.max(1, (hoursPerTurbine || 10000) * Math.max(1, quantity));
+    }
+  } else {
+    totalHours = Math.max(1, (hoursPerTurbine || 10000) * Math.max(1, quantity));
+  }
+
   const projectStart = safeParseDate(startDate, new Date());
   let projectEnd = safeParseDate(endDate, addDays(projectStart, turbineType?.defaultDurationDays || 365));
 
@@ -152,10 +169,25 @@ export function calculateTurbineProject(
     workCentersByCategory[cat].push(wc);
   });
 
-  // Calculate sector loads
-  Object.entries(activeSectorCurves).forEach(([sectorName, curveCfg]) => {
-    const effectivePct = ((curveCfg.percentage * (curveCfg.volumeGain || 1.0)) / rawPercentageSum) * 100;
-    const sectorTotalHours = totalHours * (effectivePct / 100);
+  const allSectorNames = Array.from(
+    new Set<string>([
+      ...Object.keys(activeSectorCurves),
+      ...Object.keys(workCentersByCategory),
+    ])
+  );
+
+  // Calculate sector loads and timeline dates
+  allSectorNames.forEach((sectorName) => {
+    const curveCfg = activeSectorCurves[sectorName] || {
+      sectorName,
+      percentage: 10,
+      startPct: 0,
+      endPct: 100,
+      curveShape: 's-curve' as const,
+      volumeGain: 1.0,
+    };
+
+    const wcsInSector = workCentersByCategory[sectorName] || [];
 
     // Calculate dates based on startPct and endPct
     const startPctSafe = Math.max(0, Math.min(100, curveCfg.startPct || 0));
@@ -175,51 +207,76 @@ export function calculateTurbineProject(
       endDate: sectorEndStr,
     };
 
-    // Distribute among work centers in this category
-    const wcsInSector = workCentersByCategory[sectorName] || [];
+    let sectorTotalHours = 0;
     const wcItems: { id: string; name: string; hours: number; weeklyCapacity: number }[] = [];
 
-    if (wcsInSector.length > 0) {
-      const customShares = curveCfg.customWorkCenterShares;
-      const hasCustomShares = !!(customShares && Object.keys(customShares).length > 0);
-
-      let customSum = 0;
-      if (hasCustomShares) {
-        wcsInSector.forEach((wc) => {
-          const val = customShares[wc.id] ?? customShares[wc.name];
-          if (typeof val === 'number' && !isNaN(val)) {
-            customSum += val;
-          }
-        });
-      }
-
-      const totalSectorCap = wcsInSector.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0);
-
+    if (hasCustomWcHours) {
+      // PRESERVE EXACT HOURS FROM FILE/CUSTOM INPUT - DO NOT REDISTRIBUTE
       wcsInSector.forEach((wc) => {
         const cap = calculateWeeklyCapacity(wc);
-        let share: number;
+        const allocated =
+          customWorkCenterHours![wc.id] ??
+          customWorkCenterHours![wc.name] ??
+          0;
 
-        if (hasCustomShares && customSum > 0) {
-          const wcVal = customShares[wc.id] ?? customShares[wc.name] ?? 0;
-          share = wcVal / customSum;
-        } else {
-          // Default to equal distribution across all work centers in the sector
-          share = 1 / wcsInSector.length;
-        }
-
-        const wcAllocatedHours = Math.round(sectorTotalHours * share);
-
-        workCenterHours[wc.id] = wcAllocatedHours;
+        workCenterHours[wc.id] = allocated;
         workCenterDates[wc.id] = { startDate: sectorStartStr, endDate: sectorEndStr };
+        sectorTotalHours += allocated;
 
         wcItems.push({
           id: wc.id,
           name: wc.name,
-          hours: wcAllocatedHours,
+          hours: allocated,
           weeklyCapacity: cap,
         });
       });
+    } else {
+      // Standard parametric generation from turbine model
+      const effectivePct = ((curveCfg.percentage * (curveCfg.volumeGain || 1.0)) / rawPercentageSum) * 100;
+      sectorTotalHours = totalHours * (effectivePct / 100);
+
+      if (wcsInSector.length > 0) {
+        const customShares = curveCfg.customWorkCenterShares;
+        const hasCustomShares = !!(customShares && Object.keys(customShares).length > 0);
+
+        let customSum = 0;
+        if (hasCustomShares) {
+          wcsInSector.forEach((wc) => {
+            const val = customShares[wc.id] ?? customShares[wc.name];
+            if (typeof val === 'number' && !isNaN(val)) {
+              customSum += val;
+            }
+          });
+        }
+
+        wcsInSector.forEach((wc) => {
+          const cap = calculateWeeklyCapacity(wc);
+          let share: number;
+
+          if (hasCustomShares && customSum > 0) {
+            const wcVal = customShares[wc.id] ?? customShares[wc.name] ?? 0;
+            share = wcVal / customSum;
+          } else {
+            // Default to equal distribution across all work centers in the sector
+            share = 1 / wcsInSector.length;
+          }
+
+          const wcAllocatedHours = Math.round(sectorTotalHours * share);
+
+          workCenterHours[wc.id] = wcAllocatedHours;
+          workCenterDates[wc.id] = { startDate: sectorStartStr, endDate: sectorEndStr };
+
+          wcItems.push({
+            id: wc.id,
+            name: wc.name,
+            hours: wcAllocatedHours,
+            weeklyCapacity: cap,
+          });
+        });
+      }
     }
+
+    const effectivePct = totalHours > 0 ? (sectorTotalHours / totalHours) * 100 : (curveCfg.percentage || 0);
 
     sectorSummary.push({
       sectorName,
@@ -234,6 +291,15 @@ export function calculateTurbineProject(
       workCenters: wcItems,
     });
   });
+
+  // Preserve any remaining custom work center hours not mapped into standard categories
+  if (hasCustomWcHours) {
+    Object.entries(customWorkCenterHours!).forEach(([key, val]) => {
+      if (typeof val === 'number' && val > 0 && workCenterHours[key] === undefined) {
+        workCenterHours[key] = val;
+      }
+    });
+  }
 
   // 2. Build multi-turbine schedules and weekly distribution points
   const turbineInstances: { id: string; name: string; startDate: Date; endDate: Date; hours: number }[] = [];
@@ -258,7 +324,7 @@ export function calculateTurbineProject(
       name: `Turbina ${i + 1}`,
       startDate: tStart,
       endDate: tEnd,
-      hours: hoursPerTurbine,
+      hours: quantity > 1 ? totalHours / quantity : totalHours,
     });
   }
 
@@ -295,8 +361,17 @@ export function calculateTurbineProject(
       let turbineWeekHours = 0;
 
       Object.entries(activeSectorCurves).forEach(([secName, curveCfg]) => {
-        const secWeight = ((curveCfg.percentage * (curveCfg.volumeGain || 1.0)) / rawPercentageSum);
-        const secHoursInTurbine = turbine.hours * secWeight;
+        let secHoursInTurbine: number;
+        if (hasCustomWcHours) {
+          const summarySec = sectorSummary.find((s) => s.sectorName === secName);
+          const secHours = summarySec ? summarySec.hours : 0;
+          secHoursInTurbine = quantity > 1 ? secHours / quantity : secHours;
+        } else {
+          const secWeight = ((curveCfg.percentage * (curveCfg.volumeGain || 1.0)) / rawPercentageSum);
+          secHoursInTurbine = turbine.hours * secWeight;
+        }
+
+        if (secHoursInTurbine <= 0) return;
 
         const secStartT = (curveCfg.startPct || 0) / 100;
         const secEndT = (curveCfg.endPct || 100) / 100;

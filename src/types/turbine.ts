@@ -32,4 +32,5 @@ export interface TurbineProjectConfig {
   staggeringMode: 'PARALLEL' | 'SEQUENTIAL' | 'STAGGERED';
   staggerOffsetWeeks: number;
   customSectorCurves?: Record<string, SectorCurveConfig>;
+  customWorkCenterHours?: Record<string, number>; // Preserves exact imported hours per work center without redistribution
 }

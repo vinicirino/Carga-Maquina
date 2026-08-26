@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   X,
   Upload,
@@ -99,8 +99,33 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
   const [importDestination, setImportDestination] = useState<'append' | 'replace_projects' | 'new_scenario'>('append');
   const [newScenarioName, setNewScenarioName] = useState('Importação Planilha de Projetos');
 
+  // Reset wizard to Step 1 whenever modal is opened
+  useEffect(() => {
+    if (isOpen) {
+      setStep(1);
+      setInputText('');
+      setFileName(null);
+      setParsedData(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [isOpen]);
+
+  const handleClose = () => {
+    setStep(1);
+    setParsedData(null);
+    setInputText('');
+    setFileName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    onClose();
+  };
+
   // Handle Text/File parsing
   const handleParseText = (text: string) => {
+    setStep(1);
     setInputText(text);
     const parsed = parseMatrixCsvText(
       text,
@@ -116,6 +141,8 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Always reset to Step 1 when a new file is uploaded
+    setStep(1);
     setFileName(file.name);
     const reader = new FileReader();
 
@@ -136,6 +163,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
           globalTurbineTypeId,
           globalStartDate
         );
+        setStep(1);
         setParsedData(parsed);
       };
       reader.readAsArrayBuffer(file);
@@ -206,6 +234,14 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
       scenarioName: newScenarioName,
     });
 
+    setStep(1);
+    setParsedData(null);
+    setInputText('');
+    setFileName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
     onClose();
   };
 
@@ -259,7 +295,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
@@ -525,6 +561,13 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                     <RefreshCw className="w-3.5 h-3.5" />
                     <span>Aplicar Regras a Todos</span>
                   </button>
+                </div>
+
+                <div className="bg-indigo-50/70 border border-indigo-100 rounded-lg p-2.5 text-[11px] text-indigo-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>
+                    <strong>Valores originais preservados:</strong> As horas exatas de cada centro de trabalho da sua planilha serão mantidas intactas. O tipo de turbina define a curva de avanço temporal (Curva S) e as datas de início e término dos setores.
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">

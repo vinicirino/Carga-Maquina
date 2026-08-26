@@ -79,6 +79,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [isMobileOpen, setIsMobileOpen] = useState<boolean>(false);
 
+  const activeScenario = scenarios.find((s) => s.id === activeScenarioId) || scenarios[0];
+
   const navItems = [
     {
       id: 'overview' as const,
@@ -243,18 +245,38 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </select>
               </div>
 
-              {/* Status Indicator */}
-              <div className="flex items-center gap-1 text-[11px]">
-                {isScenarioModified ? (
-                  <span className="flex items-center gap-1 text-amber-400 font-semibold animate-pulse">
-                    <AlertCircle className="w-3 h-3 text-amber-400 shrink-0" />
-                    <span className="truncate">Alterações não salvas</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-emerald-400 font-medium">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span className="truncate">Sincronizado</span>
-                  </span>
+              {/* Status Indicator & Baseline Badge */}
+              <div className="flex flex-col gap-1 text-[11px]">
+                <div className="flex items-center justify-between gap-1">
+                  {isScenarioModified ? (
+                    <span className="flex items-center gap-1 text-amber-400 font-semibold animate-pulse">
+                      <AlertCircle className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate">Alterações não salvas</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <span className="truncate">Sincronizado</span>
+                    </span>
+                  )}
+
+                  {activeScenario?.isBaseline && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300 border border-amber-400/30 text-[10px] font-black shrink-0">
+                      <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                      <span>Oficial</span>
+                    </span>
+                  )}
+                </div>
+
+                {!activeScenario?.isBaseline && onSaveAsBaseline && (
+                  <button
+                    onClick={onSaveAsBaseline}
+                    title="Definir este cenário atual como a Base Primária Oficial (Baseline do PCP)"
+                    className="flex items-center justify-center gap-1.5 w-full py-1 px-2 rounded-lg text-[10px] font-bold text-amber-300 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/30 transition-colors cursor-pointer"
+                  >
+                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                    <span>Definir como Base Primária</span>
+                  </button>
                 )}
               </div>
 

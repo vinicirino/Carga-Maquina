@@ -451,15 +451,46 @@ export function compileMatrixImport(
         (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === grp.trim().toUpperCase()
       );
       const sectorHours = wcsInSector.reduce((sum, wc) => sum + (finalWcHours[wc.id] || 0), 0);
-      const calculatedPct = totalProjHours > 0 ? Math.round((sectorHours / totalProjHours) * 100) : 0;
+      const calculatedPct = totalProjHours > 0 ? Number(((sectorHours / totalProjHours) * 100).toFixed(1)) : 0;
+
+      // Build customWorkCenterShares strictly matching imported CSV values
+      const customWcShares: Record<string, number> = {};
+      if (sectorHours > 0) {
+        let allocatedSum = 0;
+        wcsInSector.forEach((wc) => {
+          const hrs = finalWcHours[wc.id] || 0;
+          if (hrs > 0) {
+            const share = Math.round((hrs / sectorHours) * 100);
+            customWcShares[wc.id] = share;
+            allocatedSum += share;
+          } else {
+            customWcShares[wc.id] = 0; // Explicitly zero for inactive work centers
+          }
+        });
+
+        // Ensure shares sum to 100% for active work centers
+        if (allocatedSum !== 100 && allocatedSum > 0) {
+          const activeWcs = wcsInSector.filter((wc) => (finalWcHours[wc.id] || 0) > 0);
+          if (activeWcs.length > 0) {
+            activeWcs.sort((a, b) => (finalWcHours[b.id] || 0) - (finalWcHours[a.id] || 0));
+            customWcShares[activeWcs[0].id] = Math.max(0, customWcShares[activeWcs[0].id] + (100 - allocatedSum));
+          }
+        }
+      } else {
+        // Zero out all work centers in sectors that have no hours in CSV
+        wcsInSector.forEach((wc) => {
+          customWcShares[wc.id] = 0;
+        });
+      }
 
       customSectorCurves[grp] = {
         sectorName: grp,
-        percentage: calculatedPct > 0 ? calculatedPct : (defaultCurve?.percentage || 10),
+        percentage: calculatedPct,
         startPct: defaultCurve?.startPct ?? 10,
         endPct: defaultCurve?.endPct ?? 70,
         curveShape: defaultCurve?.curveShape || 's-curve',
-        volumeGain: defaultCurve?.volumeGain || 1.0,
+        volumeGain: 1.0,
+        customWorkCenterShares: customWcShares,
       };
     });
 
@@ -474,24 +505,28 @@ export function compileMatrixImport(
       staggeringMode: 'STAGGERED' as const,
       staggerOffsetWeeks: 4,
       customSectorCurves,
+      customWorkCenterHours: { ...finalWcHours },
     };
 
     // Calculate timeline and date distribution using turbine calculator
     const calcResult = calculateTurbineProject(turbineConfig, turbineType, finalWorkCenters);
 
-    // Merge calculated dates and final workCenterHours
+    // Merge calculated dates and final workCenterHours (preserving exact hours from file)
     const color = defaultColors[idx % defaultColors.length];
     const project: Project = {
       id: `proj-matrix-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 5)}`,
       name: pRow.projectName.trim().toUpperCase(),
       startDate: pRow.startDate || calcResult.startDate,
       endDate: pRow.endDate || calcResult.endDate,
-      workCenterHours: finalWcHours,
+      workCenterHours: { ...finalWcHours },
       groupDates: calcResult.groupDates,
       workCenterDates: calcResult.workCenterDates,
       color,
       enabled: true,
-      turbineConfig,
+      turbineConfig: {
+        ...turbineConfig,
+        customWorkCenterHours: { ...finalWcHours },
+      },
     };
 
     generatedProjects.push(project);

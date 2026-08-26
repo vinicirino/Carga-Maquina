@@ -104,7 +104,19 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
         (sum, wc) => sum + (project.workCenterHours?.[wc.name] || project.workCenterHours?.[wc.id] || 0),
         0
       );
-      const pct = totalHours > 0 ? Number(((groupHours / totalHours) * 100).toFixed(1)) : 10;
+      const pct = totalHours > 0 ? Number(((groupHours / totalHours) * 100).toFixed(1)) : 0;
+
+      const customWcShares: Record<string, number> = {};
+      if (groupHours > 0) {
+        wcsInGroup.forEach((wc) => {
+          const hrs = project.workCenterHours?.[wc.name] ?? project.workCenterHours?.[wc.id] ?? 0;
+          customWcShares[wc.id] = hrs > 0 ? Math.round((hrs / groupHours) * 100) : 0;
+        });
+      } else {
+        wcsInGroup.forEach((wc) => {
+          customWcShares[wc.id] = 0;
+        });
+      }
 
       initialCurves[g] = {
         sectorName: g,
@@ -113,6 +125,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
         endPct: 60,
         curveShape: 's-curve',
         volumeGain: 1.0,
+        customWorkCenterShares: customWcShares,
       };
     });
 
@@ -127,22 +140,56 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
       staggeringMode: 'STAGGERED',
       staggerOffsetWeeks: 4,
       customSectorCurves: initialCurves,
+      customWorkCenterHours: project.workCenterHours ? { ...project.workCenterHours } : undefined,
     };
   });
 
   // Keep dates and name in sync if project prop changes externally
   useEffect(() => {
     if (project.turbineConfig) {
-      setConfig(JSON.parse(JSON.stringify(project.turbineConfig)));
+      const cfg: TurbineProjectConfig = JSON.parse(JSON.stringify(project.turbineConfig));
+      if (!cfg.customWorkCenterHours && project.workCenterHours) {
+        cfg.customWorkCenterHours = { ...project.workCenterHours };
+      }
+
+      // Ensure customSectorCurves has customWorkCenterShares for each sector
+      if (cfg.customSectorCurves) {
+        const sourceHours = cfg.customWorkCenterHours || project.workCenterHours || {};
+        Object.entries(cfg.customSectorCurves).forEach(([sec, secCfg]) => {
+          if (!secCfg.customWorkCenterShares || Object.keys(secCfg.customWorkCenterShares).length === 0) {
+            const wcsInGroup = workCenters.filter(
+              (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === sec.trim().toUpperCase()
+            );
+            const groupHours = wcsInGroup.reduce(
+              (sum, wc) => sum + (sourceHours[wc.name] ?? sourceHours[wc.id] ?? 0),
+              0
+            );
+            const customWcShares: Record<string, number> = {};
+            if (groupHours > 0) {
+              wcsInGroup.forEach((wc) => {
+                const hrs = sourceHours[wc.name] ?? sourceHours[wc.id] ?? 0;
+                customWcShares[wc.id] = hrs > 0 ? Math.round((hrs / groupHours) * 100) : 0;
+              });
+            } else {
+              wcsInGroup.forEach((wc) => {
+                customWcShares[wc.id] = 0;
+              });
+            }
+            secCfg.customWorkCenterShares = customWcShares;
+          }
+        });
+      }
+      setConfig(cfg);
     } else {
       setConfig((prev) => ({
         ...prev,
         projectName: project.name,
         startDate: project.startDate,
         endDate: project.endDate,
+        customWorkCenterHours: project.workCenterHours ? { ...project.workCenterHours } : undefined,
       }));
     }
-  }, [project.id, project.startDate, project.endDate, project.name, project.turbineConfig]);
+  }, [project.id, project.startDate, project.endDate, project.name, project.turbineConfig, project.workCenterHours, workCenters]);
 
   // Find associated turbine type
   const turbineType: TurbineType = useMemo(() => {
@@ -156,13 +203,39 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
   }, [config, turbineType, workCenters]);
 
   const handleSectorConfigChange = (secName: string, updated: SectorCurveConfig) => {
-    setConfig((prev) => ({
-      ...prev,
-      customSectorCurves: {
+    setConfig((prev) => {
+      const nextCustomCurves = {
         ...(prev.customSectorCurves || {}),
         [secName]: updated,
-      },
-    }));
+      };
+
+      let nextWcHours = prev.customWorkCenterHours ? { ...prev.customWorkCenterHours } : undefined;
+      if (nextWcHours && updated.customWorkCenterShares) {
+        const wcsInGroup = workCenters.filter(
+          (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === secName.trim().toUpperCase()
+        );
+        const groupHours = wcsInGroup.reduce(
+          (sum, wc) => sum + (prev.customWorkCenterHours?.[wc.name] ?? prev.customWorkCenterHours?.[wc.id] ?? 0),
+          0
+        );
+        if (groupHours > 0) {
+          wcsInGroup.forEach((wc) => {
+            const share = updated.customWorkCenterShares?.[wc.id] ?? 0;
+            const computedHrs = Math.round(groupHours * (share / 100));
+            nextWcHours![wc.id] = computedHrs;
+            if (nextWcHours![wc.name] !== undefined) {
+              nextWcHours![wc.name] = computedHrs;
+            }
+          });
+        }
+      }
+
+      return {
+        ...prev,
+        customSectorCurves: nextCustomCurves,
+        customWorkCenterHours: nextWcHours,
+      };
+    });
   };
 
   const handleSectorHoursChange = (secName: string, newHours: number) => {

@@ -12,6 +12,7 @@ import {
   Clock,
   Layers,
   Factory,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface ScenarioManagerModalProps {
@@ -44,6 +45,7 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -51,6 +53,7 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
     setEditingId(scen.id);
     setEditName(scen.name);
     setEditDescription(scen.description);
+    setConfirmDeleteId(null);
   };
 
   const saveEdit = (id: string) => {
@@ -97,6 +100,7 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
             {scenarios.map((scen) => {
               const isActive = scen.id === activeScenarioId;
               const isEditing = editingId === scen.id;
+              const isDeleting = confirmDeleteId === scen.id;
 
               return (
                 <div
@@ -107,7 +111,39 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
                       : 'bg-white border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  {isEditing ? (
+                  {isDeleting ? (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-xs text-rose-900 font-semibold">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>
+                          Deseja excluir o cenário <strong>"{scen.name}"</strong>?
+                          {scenarios.length === 1 && (
+                            <span className="block sm:inline text-rose-700 font-normal ml-1">
+                              (Este é o único cenário restante e será reinicializado como uma base limpa)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-md border border-slate-300 transition-colors cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={() => {
+                            onDeleteScenario(scen.id);
+                            setConfirmDeleteId(null);
+                          }}
+                          className="inline-flex items-center gap-1 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-md transition-colors cursor-pointer shadow-xs"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Sim, Excluir</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : isEditing ? (
                     <div className="space-y-3">
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
@@ -234,23 +270,16 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
                           </button>
                         )}
 
-                        {scenarios.length > 1 && (
-                          <button
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `Tem certeza que deseja excluir o cenário "${scen.name}"?`
-                                )
-                              ) {
-                                onDeleteScenario(scen.id);
-                              }
-                            }}
-                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                            title="Excluir Cenário"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => {
+                            setConfirmDeleteId(scen.id);
+                            setEditingId(null);
+                          }}
+                          className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Excluir Cenário"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   )}

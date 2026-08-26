@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   Trash2,
@@ -34,6 +34,8 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
   currentProjectsCount,
   currentWorkCentersCount,
 }) => {
+  const [confirmingAction, setConfirmingAction] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   return (
@@ -98,21 +100,33 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
               </div>
             </div>
             <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'Deseja limpar todos os projetos e inicializar a base limpa de produção para a sua empresa?'
-                    )
-                  ) {
-                    onResetToCleanCompanyState();
-                    onClose();
-                  }
-                }}
-                className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
-              >
-                Inicializar Base Limpa (Produção)
-              </button>
+              {confirmingAction === 'clean_state' ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-indigo-900 font-semibold">Confirmar limpeza de projetos?</span>
+                  <button
+                    onClick={() => setConfirmingAction(null)}
+                    className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-bold cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
+                      onResetToCleanCompanyState();
+                      onClose();
+                    }}
+                    className="px-3 py-1.5 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
+                  >
+                    Sim, Inicializar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingAction('clean_state')}
+                  className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
+                >
+                  Inicializar Base Limpa (Produção)
+                </button>
+              )}
             </div>
           </div>
 
@@ -133,21 +147,33 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
                 </div>
               </div>
               <div className="flex justify-end">
-                <button
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        'Deseja restaurar os dados para a Base Primária Oficial da sua empresa?'
-                      )
-                    ) {
-                      onRestoreOfficialBaseline();
-                      onClose();
-                    }
-                  }}
-                  className="px-4 py-2 text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
-                >
-                  Restaurar Base Primária
-                </button>
+                {confirmingAction === 'restore_baseline' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-emerald-900 font-semibold">Restaurar dados para a Base Oficial?</span>
+                    <button
+                      onClick={() => setConfirmingAction(null)}
+                      className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-bold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => {
+                        onRestoreOfficialBaseline();
+                        onClose();
+                      }}
+                      className="px-3 py-1.5 text-xs font-black bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
+                    >
+                      Sim, Restaurar
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmingAction('restore_baseline')}
+                    className="px-4 py-2 text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
+                  >
+                    Restaurar Base Primária
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -168,21 +194,33 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
               </div>
             </div>
             <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'Deseja carregar o conjunto de dados de exemplo / demonstração?'
-                    )
-                  ) {
-                    onResetToDemo();
-                    onClose();
-                  }
-                }}
-                className="px-4 py-2 text-xs font-semibold bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
-              >
-                Carregar Dados de Exemplo
-              </button>
+              {confirmingAction === 'load_demo' ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-800 font-semibold">Carregar dados de demonstração?</span>
+                  <button
+                    onClick={() => setConfirmingAction(null)}
+                    className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-bold cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
+                      onResetToDemo();
+                      onClose();
+                    }}
+                    className="px-3 py-1.5 text-xs font-black bg-slate-800 hover:bg-slate-900 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
+                  >
+                    Sim, Carregar
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingAction('load_demo')}
+                  className="px-4 py-2 text-xs font-semibold bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
+                >
+                  Carregar Dados de Exemplo
+                </button>
+              )}
             </div>
           </div>
 
@@ -202,20 +240,32 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
               </div>
             </div>
             <div className="flex justify-end">
-              <button
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      'ATENÇÃO: Isso apagará permanentemente todos os dados armazenados localmente no navegador. Tem certeza?'
-                    )
-                  ) {
-                    onHardClearStorage();
-                  }
-                }}
-                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
-              >
-                Limpar Todo o Armazenamento
-              </button>
+              {confirmingAction === 'hard_reset' ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-rose-900 font-semibold">Apagar todo o armazenamento local?</span>
+                  <button
+                    onClick={() => setConfirmingAction(null)}
+                    className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-bold cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
+                      onHardClearStorage();
+                    }}
+                    className="px-3 py-1.5 text-xs font-black bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
+                  >
+                    Sim, Apagar Tudo
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmingAction('hard_reset')}
+                  className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
+                >
+                  Limpar Todo o Armazenamento
+                </button>
+              )}
             </div>
           </div>
         </div>

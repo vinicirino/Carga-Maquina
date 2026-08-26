@@ -160,22 +160,59 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
       setEndDate(projectToEdit.endDate);
 
       const cfg = projectToEdit.turbineConfig;
+      const sumHours = getProjectTotalHours(projectToEdit, workCenters);
+      const hrs = (cfg?.totalHours && cfg.totalHours > 0) ? cfg.totalHours : (sumHours > 0 ? sumHours : 10000);
+
       if (cfg) {
         if (cfg.turbineTypeId) setSelectedTypeId(cfg.turbineTypeId);
         if (cfg.quantity) setQuantity(cfg.quantity);
         if (cfg.hoursPerTurbine) setHoursPerTurbine(cfg.hoursPerTurbine);
-        if (cfg.totalHours) setTotalHoursInput(cfg.totalHours);
-        if (cfg.customSectorCurves) {
-          setCustomSectorCurves(JSON.parse(JSON.stringify(cfg.customSectorCurves)));
-        }
+        setTotalHoursInput(hrs);
       } else {
-        // Calculate total hours from workCenterHours with strict deduplication
-        const sumHours = getProjectTotalHours(projectToEdit, workCenters);
-        const hrs = sumHours > 0 ? sumHours : 10000;
         setHoursPerTurbine(hrs);
         setTotalHoursInput(hrs);
         setQuantity(1);
       }
+
+      const curves: Record<string, SectorCurveConfig> = {};
+      const sourceHours = cfg?.customWorkCenterHours || projectToEdit.workCenterHours || {};
+
+      allKnownSectorGroups.forEach((secName) => {
+        const existingCurve = cfg?.customSectorCurves?.[secName];
+        const wcsInSector = workCenters.filter(
+          (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === secName.trim().toUpperCase()
+        );
+        const sectorHours = wcsInSector.reduce(
+          (sum, wc) => sum + (sourceHours[wc.name] ?? sourceHours[wc.id] ?? 0),
+          0
+        );
+        const calculatedPct = hrs > 0 ? Number(((sectorHours / hrs) * 100).toFixed(1)) : 0;
+
+        const customWcShares: Record<string, number> = {};
+        if (sectorHours > 0) {
+          wcsInSector.forEach((wc) => {
+            const h = sourceHours[wc.name] ?? sourceHours[wc.id] ?? 0;
+            customWcShares[wc.id] = h > 0 ? Math.round((h / sectorHours) * 100) : 0;
+          });
+        } else {
+          wcsInSector.forEach((wc) => {
+            customWcShares[wc.id] = 0;
+          });
+        }
+
+        curves[secName] = {
+          sectorName: secName,
+          percentage: existingCurve?.percentage ?? calculatedPct,
+          startPct: existingCurve?.startPct ?? 10,
+          endPct: existingCurve?.endPct ?? 60,
+          curveShape: existingCurve?.curveShape ?? 's-curve',
+          volumeGain: existingCurve?.volumeGain ?? 1.0,
+          customWorkCenterShares: existingCurve?.customWorkCenterShares && Object.keys(existingCurve.customWorkCenterShares).length > 0
+            ? existingCurve.customWorkCenterShares
+            : customWcShares,
+        };
+      });
+      setCustomSectorCurves(curves);
     } else {
       // New project mode
       if (selectedTurbine) {
@@ -360,6 +397,10 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
       staggeringMode: 'STAGGERED',
       staggerOffsetWeeks: 4,
       customSectorCurves,
+      customWorkCenterHours:
+        projectToEdit?.turbineConfig?.customWorkCenterHours ||
+        projectToEdit?.workCenterHours ||
+        undefined,
     };
   }, [
     projectName,
@@ -370,6 +411,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
     startDate,
     endDate,
     customSectorCurves,
+    projectToEdit,
   ]);
 
   const calculationResult: TurbineCalculationResult = useMemo(() => {
