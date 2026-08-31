@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { WorkCenter, Project } from '../types';
+import { WorkCenter, Project, CalendarException } from '../types';
 import { TurbineType, SectorCurveConfig } from '../types/turbine';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { getWorkCenterAllocatedHours } from '../utils/calculator';
@@ -22,6 +22,8 @@ import {
   AlertTriangle,
   Flame,
   TrendingUp,
+  Palmtree,
+  Calendar,
 } from 'lucide-react';
 
 export interface SCurveLinkDetail {
@@ -44,6 +46,8 @@ interface WorkCenterManagerModalProps {
   sectorGroups: string[];
   turbineTypes?: TurbineType[];
   projects?: Project[];
+  calendarExceptions?: CalendarException[];
+  onOpenCalendarModal?: () => void;
   onAddSectorGroup: (name: string) => void;
   onDeleteSectorGroup: (name: string) => void;
   onSaveWorkCenters: (wcs: WorkCenter[]) => void;
@@ -57,6 +61,8 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
   sectorGroups,
   turbineTypes = [],
   projects = [],
+  calendarExceptions = [],
+  onOpenCalendarModal,
   onAddSectorGroup,
   onDeleteSectorGroup,
   onSaveWorkCenters,
@@ -300,12 +306,33 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenCalendarModal && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenCalendarModal();
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg transition-colors cursor-pointer"
+                title="Abrir Calendário de Férias, Feriados e Paradas"
+              >
+                <Palmtree className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Calendário de Férias & Feriados</span>
+                {calendarExceptions.length > 0 && (
+                  <span className="px-1.5 py-0.2 bg-emerald-200 text-emerald-900 rounded-full text-[10px] font-black">
+                    {calendarExceptions.length}
+                  </span>
+                )}
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body: Left Sidebar (Dark Blue) + Right Content (Light) */}

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { WorkCenter, Project, DEFAULT_SECTOR_GROUPS, PlanningScenario } from './types';
+import { WorkCenter, Project, DEFAULT_SECTOR_GROUPS, PlanningScenario, CalendarException } from './types';
 import { INITIAL_DATA, RAW_INITIAL_JSON, parseJsonToState } from './data/initialData';
 import { getInitialScenarios } from './data/initialScenarios';
+import { DEFAULT_CALENDAR_EXCEPTIONS } from './data/defaultCalendar';
 import { generateWeeklySchedule } from './utils/calculator';
 import { sanitizeProjectSchedules } from './utils/dateValidation';
 import { Sidebar } from './components/Sidebar';
@@ -22,7 +23,7 @@ import { ScenarioManagerModal } from './components/ScenarioManagerModal';
 import { ScenarioComparisonModal } from './components/ScenarioComparisonModal';
 import { DatabaseResetModal } from './components/DatabaseResetModal';
 import { PrintReportModal } from './components/PrintReportModal';
-import { ScenarioBar } from './components/ScenarioBar';
+import { CalendarManagerModal } from './components/CalendarManagerModal';
 import { ScenarioImportExportModal, ScenarioImportPayload } from './components/ScenarioImportExportModal';
 import { TurbineType } from './types/turbine';
 import { DEFAULT_TURBINE_TYPES } from './data/defaultTurbines';
@@ -43,6 +44,7 @@ import {
 const STORAGE_KEY_WORKCENTERS = 'carga_maquina_workcenters_v1';
 const STORAGE_KEY_PROJECTS = 'carga_maquina_projects_v1';
 const STORAGE_KEY_SECTOR_GROUPS = 'carga_maquina_sector_groups_v1';
+const STORAGE_KEY_CALENDAR_EXCEPTIONS = 'carga_maquina_calendar_exceptions_v1';
 const STORAGE_KEY_TURBINE_TYPES = 'carga_maquina_turbine_types_v1';
 const STORAGE_KEY_SCENARIOS = 'carga_maquina_scenarios_v1';
 const STORAGE_KEY_ACTIVE_SCENARIO_ID = 'carga_maquina_active_scenario_id_v1';
@@ -80,7 +82,7 @@ export default function App() {
     );
   }, [scenarios, activeScenarioId]);
 
-  // Active Data State (WorkCenters, Projects, SectorGroups) initialized from active scenario or localStorage fallback
+  // Active Data State (WorkCenters, Projects, SectorGroups, CalendarExceptions) initialized from active scenario or localStorage fallback
   const [sectorGroups, setSectorGroups] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_SECTOR_GROUPS);
@@ -111,6 +113,19 @@ export default function App() {
     return activeScenario?.projects || INITIAL_DATA.projects;
   });
 
+  const [calendarExceptions, setCalendarExceptions] = useState<CalendarException[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_CALENDAR_EXCEPTIONS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to load calendar exceptions from localStorage', e);
+    }
+    return activeScenario?.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS;
+  });
+
   const [activeTab, setActiveTab] = useState<
     'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation'
   >('overview');
@@ -139,6 +154,7 @@ export default function App() {
   const [isMatrixModalOpen, setIsMatrixModalOpen] = useState(false);
   const [isWcModalOpen, setIsWcModalOpen] = useState(false);
   const [isTurbineTypesModalOpen, setIsTurbineTypesModalOpen] = useState(false);
+  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [isTurbineProjectModalOpen, setIsTurbineProjectModalOpen] = useState(false);
   const [isNewScenarioModalOpen, setIsNewScenarioModalOpen] = useState(false);
@@ -199,14 +215,19 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY_SECTOR_GROUPS, JSON.stringify(sectorGroups));
   }, [sectorGroups]);
 
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_CALENDAR_EXCEPTIONS, JSON.stringify(calendarExceptions));
+  }, [calendarExceptions]);
+
   // Check if current state differs from the active saved scenario state
   const isScenarioModified = useMemo(() => {
     if (!activeScenario) return false;
     const wcDiff = JSON.stringify(workCenters) !== JSON.stringify(activeScenario.workCenters);
     const projDiff = JSON.stringify(projects) !== JSON.stringify(activeScenario.projects);
     const grpDiff = JSON.stringify(sectorGroups) !== JSON.stringify(activeScenario.sectorGroups);
-    return wcDiff || projDiff || grpDiff;
-  }, [workCenters, projects, sectorGroups, activeScenario]);
+    const calDiff = JSON.stringify(calendarExceptions) !== JSON.stringify(activeScenario.calendarExceptions || []);
+    return wcDiff || projDiff || grpDiff || calDiff;
+  }, [workCenters, projects, sectorGroups, calendarExceptions, activeScenario]);
 
   // Scenario Management Handlers
   const handleSelectScenario = (id: string) => {
@@ -220,6 +241,7 @@ export default function App() {
           workCenters: JSON.parse(JSON.stringify(workCenters)),
           projects: JSON.parse(JSON.stringify(projects)),
           sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
           updatedAt: new Date().toISOString(),
         };
       }
@@ -234,6 +256,7 @@ export default function App() {
     setWorkCenters(JSON.parse(JSON.stringify(target.workCenters)));
     setProjects(JSON.parse(JSON.stringify(target.projects)));
     setSectorGroups(JSON.parse(JSON.stringify(target.sectorGroups || DEFAULT_SECTOR_GROUPS)));
+    setCalendarExceptions(JSON.parse(JSON.stringify(target.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS)));
   };
 
   const handleSaveCurrentScenario = () => {
@@ -245,6 +268,7 @@ export default function App() {
             workCenters: JSON.parse(JSON.stringify(workCenters)),
             projects: JSON.parse(JSON.stringify(projects)),
             sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+            calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
             updatedAt: new Date().toISOString(),
           };
         }
@@ -257,22 +281,26 @@ export default function App() {
     let sourceWcs = workCenters;
     let sourceProjects = projects;
     let sourceGroups = sectorGroups;
+    let sourceCalendar = calendarExceptions;
 
     if (sourceScenarioId === 'blank') {
       // Cenário em branco: 0 projetos cadastrados, mantendo a estrutura dos centros de trabalho
       sourceProjects = [];
       sourceWcs = JSON.parse(JSON.stringify(workCenters));
       sourceGroups = JSON.parse(JSON.stringify(sectorGroups));
+      sourceCalendar = JSON.parse(JSON.stringify(calendarExceptions));
     } else if (sourceScenarioId === 'current') {
       sourceProjects = JSON.parse(JSON.stringify(projects));
       sourceWcs = JSON.parse(JSON.stringify(workCenters));
       sourceGroups = JSON.parse(JSON.stringify(sectorGroups));
+      sourceCalendar = JSON.parse(JSON.stringify(calendarExceptions));
     } else {
       const src = scenarios.find((s) => s.id === sourceScenarioId);
       if (src) {
         sourceWcs = JSON.parse(JSON.stringify(src.workCenters));
         sourceProjects = JSON.parse(JSON.stringify(src.projects));
         sourceGroups = JSON.parse(JSON.stringify(src.sectorGroups || sectorGroups));
+        sourceCalendar = JSON.parse(JSON.stringify(src.calendarExceptions || calendarExceptions));
       }
     }
 
@@ -284,6 +312,7 @@ export default function App() {
           workCenters: JSON.parse(JSON.stringify(workCenters)),
           projects: JSON.parse(JSON.stringify(projects)),
           sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
           updatedAt: new Date().toISOString(),
         };
       }
@@ -299,6 +328,7 @@ export default function App() {
       workCenters: JSON.parse(JSON.stringify(sourceWcs)),
       projects: JSON.parse(JSON.stringify(sourceProjects)),
       sectorGroups: JSON.parse(JSON.stringify(sourceGroups)),
+      calendarExceptions: JSON.parse(JSON.stringify(sourceCalendar)),
     };
 
     const nextScenarios = [...currentScenariosSnapshot, newScen];
@@ -307,6 +337,7 @@ export default function App() {
     setWorkCenters(newScen.workCenters);
     setProjects(newScen.projects);
     setSectorGroups(newScen.sectorGroups);
+    setCalendarExceptions(newScen.calendarExceptions || []);
   };
 
   const handleDuplicateScenario = (id: string) => {
@@ -318,6 +349,7 @@ export default function App() {
           workCenters: JSON.parse(JSON.stringify(workCenters)),
           projects: JSON.parse(JSON.stringify(projects)),
           sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
           updatedAt: new Date().toISOString(),
         };
       }
@@ -333,6 +365,7 @@ export default function App() {
       workCenters,
       projects,
       sectorGroups,
+      calendarExceptions,
     };
 
     const dupScen: PlanningScenario = {
@@ -350,6 +383,7 @@ export default function App() {
     setWorkCenters(dupScen.workCenters);
     setProjects(dupScen.projects);
     setSectorGroups(dupScen.sectorGroups);
+    setCalendarExceptions(dupScen.calendarExceptions || []);
   };
 
   const handleUpdateScenarioInfo = (id: string, name: string, description: string) => {
@@ -519,10 +553,10 @@ export default function App() {
     );
   };
 
-  // Execute Capacity & Workload Calculation Engine
+  // Execute Capacity & Workload Calculation Engine (with dynamic holiday/vacation capacity adjustments)
   const calculationResult = useMemo(() => {
-    return generateWeeklySchedule(projects, workCenters);
-  }, [projects, workCenters]);
+    return generateWeeklySchedule(projects, workCenters, calendarExceptions);
+  }, [projects, workCenters, calendarExceptions]);
 
   const {
     weeklyBuckets,
@@ -533,6 +567,17 @@ export default function App() {
   } = calculationResult;
 
   // Handlers
+  const handleSaveCalendarExceptions = (newExceptions: CalendarException[]) => {
+    setCalendarExceptions(newExceptions);
+    setScenarios((prev) =>
+      prev.map((s) =>
+        s.id === activeScenarioId
+          ? { ...s, calendarExceptions: newExceptions, updatedAt: new Date().toISOString() }
+          : s
+      )
+    );
+    showToast(`📅 Calendário Fabril atualizado (${newExceptions.length} eventos configurados)!`);
+  };
   const handleUpdateWorkCenter = (updated: WorkCenter) => {
     setWorkCenters((prev) => {
       const next = prev.map((wc) => (wc.id === updated.id ? updated : wc));
@@ -766,6 +811,7 @@ export default function App() {
       setWorkCenters(activeTarget.workCenters);
       setProjects(activeTarget.projects);
       setSectorGroups(activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS);
+      setCalendarExceptions(activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS);
       showToast(`📦 Pacote com ${importedScenarios.length} cenários restaurado com sucesso!`);
       return;
     }
@@ -778,6 +824,7 @@ export default function App() {
       setWorkCenters(activeTarget.workCenters);
       setProjects(activeTarget.projects);
       setSectorGroups(activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS);
+      setCalendarExceptions(activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS);
       showToast(`✨ ${importedScenarios.length} cenários adicionados à biblioteca!`);
       return;
     }
@@ -787,6 +834,9 @@ export default function App() {
       const scenarioGroups = scenario.sectorGroups && scenario.sectorGroups.length > 0
         ? scenario.sectorGroups
         : sectorGroups;
+      const scenarioCalendar = scenario.calendarExceptions && scenario.calendarExceptions.length > 0
+        ? scenario.calendarExceptions
+        : calendarExceptions;
 
       if (mode === 'create_new_scenario') {
         const newScen: PlanningScenario = {
@@ -797,6 +847,7 @@ export default function App() {
           updatedAt: new Date().toISOString(),
           isBaseline: false,
           sectorGroups: scenarioGroups,
+          calendarExceptions: scenarioCalendar,
         };
 
         setScenarios((prev) => [...prev, newScen]);
@@ -804,6 +855,7 @@ export default function App() {
         setWorkCenters(newScen.workCenters);
         setProjects(newScen.projects);
         setSectorGroups(scenarioGroups);
+        setCalendarExceptions(scenarioCalendar);
         showToast(`✅ Novo Cenário "${scenarioName}" importado e ativado com sucesso!`);
         return;
       }
@@ -812,6 +864,7 @@ export default function App() {
         setWorkCenters(scenario.workCenters);
         setProjects(scenario.projects);
         setSectorGroups(scenarioGroups);
+        setCalendarExceptions(scenarioCalendar);
         setScenarios((prev) =>
           prev.map((s) =>
             s.id === activeScenarioId
@@ -821,6 +874,7 @@ export default function App() {
                   workCenters: scenario.workCenters,
                   projects: scenario.projects,
                   sectorGroups: scenarioGroups,
+                  calendarExceptions: scenarioCalendar,
                   updatedAt: new Date().toISOString(),
                 }
               : s
@@ -973,6 +1027,8 @@ export default function App() {
         onOpenMatrixModal={() => setIsMatrixModalOpen(true)}
         onOpenWorkCenterModal={() => setIsWcModalOpen(true)}
         onOpenTurbineTypesModal={() => setIsTurbineTypesModalOpen(true)}
+        onOpenCalendarModal={() => setIsCalendarModalOpen(true)}
+        calendarEventsCount={calendarExceptions.length}
         onOpenNewProjectModal={() => setIsNewProjectModalOpen(true)}
         onOpenTurbineProjectModal={() => setIsTurbineProjectModalOpen(true)}
         onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
@@ -993,20 +1049,6 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
-        {/* Top Scenario Bar */}
-        <ScenarioBar
-          scenarios={scenarios}
-          activeScenarioId={activeScenarioId}
-          isModified={isScenarioModified}
-          onSelectScenario={handleSelectScenario}
-          onSaveCurrentScenario={handleSaveCurrentScenario}
-          onOpenNewScenarioModal={() => setIsNewScenarioModalOpen(true)}
-          onDuplicateCurrentScenario={() => handleDuplicateScenario(activeScenarioId)}
-          onOpenCompareModal={() => setIsScenarioCompareModalOpen(true)}
-          onOpenManagerModal={() => setIsScenarioManagerModalOpen(true)}
-          onOpenImportExportModal={handleOpenScenarioImportExportModal}
-        />
-
         {/* Main Container */}
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
         {/* Overview Tab (Visão Geral & KPIs: Macro / Executiva / Global) */}
@@ -1121,10 +1163,20 @@ export default function App() {
         sectorGroups={sectorGroups}
         turbineTypes={turbineTypes}
         projects={projects}
+        calendarExceptions={calendarExceptions}
+        onOpenCalendarModal={() => setIsCalendarModalOpen(true)}
         onAddSectorGroup={handleAddSectorGroup}
         onDeleteSectorGroup={handleDeleteSectorGroup}
         onSaveWorkCenters={handleSaveWorkCenters}
         onUpdateTurbineTypes={handleSaveTurbineTypes}
+      />
+
+      <CalendarManagerModal
+        isOpen={isCalendarModalOpen}
+        onClose={() => setIsCalendarModalOpen(false)}
+        calendarExceptions={calendarExceptions}
+        workCenters={workCenters}
+        onSaveCalendarExceptions={handleSaveCalendarExceptions}
       />
 
       <TurbineTypeManagerModal

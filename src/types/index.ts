@@ -12,6 +12,25 @@ export const DEFAULT_SECTOR_GROUPS: string[] = [
   'OUTROS',
 ];
 
+export type CalendarEventType =
+  | 'feriado'
+  | 'ferias_coletivas'
+  | 'manutencao'
+  | 'folga_parada';
+
+export interface CalendarException {
+  id: string;
+  title: string;
+  type: CalendarEventType;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  workCenterIds?: string[]; // Empty/undefined = All work centers (Global/Factory-wide)
+  impactType: 'full_closure' | 'capacity_reduction'; // 100% closed or partial reduction
+  capacityReductionPercentage?: number; // e.g. 50% if partial shift/team
+  description?: string;
+  color?: string;
+}
+
 export interface WorkCenter {
   id: string;
   name: string;
@@ -21,6 +40,7 @@ export interface WorkCenter {
   efficiencyPercentage: number; // e.g., 100%
   category?: SectorGroup | string;
   enabled?: boolean; // When false, excluded from charts & schedule calculation
+  calendarExceptions?: CalendarException[]; // Specific exceptions for this work center
 }
 
 export interface Project {
@@ -42,7 +62,10 @@ export interface WeeklyBucket {
   endDate: Date;
   label: string; // "Semana 33 (13/08 - 19/08/2027)"
   workCenterLoads: Record<string, number>; // workCenterId -> hours demanded in this week
+  workCenterCapacities?: Record<string, number>; // workCenterId -> effective weekly capacity (adjusted for holidays/vacations)
   projectBreakdown: Record<string, Record<string, number>>; // workCenterId -> { projectId: hours }
+  activeHolidays?: CalendarException[]; // List of holidays/vacations occurring in this week
+  effectiveWorkDays?: Record<string, number>; // workCenterId -> effective work days in this week (e.g. 4.0 out of 5)
 }
 
 export interface WorkCenterCapacitySummary {
@@ -81,6 +104,8 @@ export interface OverloadAlert {
   excessHours: number;
   utilizationPercentage: number;
   contributingProjects: { projectId: string; projectName: string; hours: number }[];
+  affectedByHolidays?: boolean;
+  holidayNames?: string[];
 }
 
 export interface SystemRecommendation {
@@ -103,4 +128,5 @@ export interface PlanningScenario {
   workCenters: WorkCenter[];
   projects: Project[];
   sectorGroups: string[];
+  calendarExceptions?: CalendarException[];
 }

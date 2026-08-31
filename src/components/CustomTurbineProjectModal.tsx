@@ -35,6 +35,7 @@ import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { getProjectTotalHours } from '../utils/dateValidation';
 import { VolumeDialControl } from './VolumeDialControl';
 import { TurbineTypeManagerModal } from './TurbineTypeManagerModal';
+import { DatePickerField } from './DatePickerField';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -738,29 +739,22 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
 
                 {/* Dates */}
                 <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                      Data Início
-                    </label>
-                    <input
-                      type="date"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
-                  </div>
+                  <DatePickerField
+                    label="Data Início"
+                    theme="dark"
+                    size="sm"
+                    value={startDate}
+                    onChange={(val) => setStartDate(val)}
+                  />
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                      Data Término
-                    </label>
-                    <input
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-                    />
-                  </div>
+                  <DatePickerField
+                    label="Data Término"
+                    theme="dark"
+                    size="sm"
+                    min={startDate}
+                    value={endDate}
+                    onChange={(val) => setEndDate(val)}
+                  />
                 </div>
               </div>
 

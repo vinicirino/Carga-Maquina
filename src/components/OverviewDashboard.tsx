@@ -86,17 +86,31 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
 
   // Aggregate Plant-wide Weekly Capacity & Demand Curve
   const plantWeeklyChartData = useMemo(() => {
-    const totalWeeklyInstalledCapacity = activeWorkCenters.reduce(
-      (acc, wc) => acc + calculateWeeklyCapacity(wc),
-      0
-    );
-
     return weeklyBuckets.map((bucket) => {
       let totalWeekLoad = 0;
+      // Calculate real effective weekly capacity in this bucket (discounting holidays/vacations)
+      let bucketEffectiveCapacity = 0;
+      let bucketNominalCapacity = 0;
+
+      for (const wc of activeWorkCenters) {
+        const nominal = calculateWeeklyCapacity(wc);
+        bucketNominalCapacity += nominal;
+        const effective = bucket.workCenterCapacities?.[wc.id] ?? nominal;
+        bucketEffectiveCapacity += effective;
+      }
+
+      const activeExceptions = bucket.activeHolidays || [];
+      const hasHolidays = activeExceptions.length > 0;
+      const isFullShutdown = bucketEffectiveCapacity === 0 && bucketNominalCapacity > 0;
+
       const row: Record<string, any> = {
         weekLabel: bucket.label.split(' ')[1] || bucket.label,
         weekKey: bucket.weekKey,
-        capacity: totalWeeklyInstalledCapacity,
+        capacity: Math.round(bucketEffectiveCapacity),
+        nominalCapacity: Math.round(bucketNominalCapacity),
+        hasHolidays,
+        isFullShutdown,
+        activeExceptions,
       };
 
       for (const proj of activeProjects) {
@@ -109,7 +123,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       }
 
       row.totalLoad = Math.round(totalWeekLoad);
-      row.isOverloaded = totalWeekLoad > totalWeeklyInstalledCapacity;
+      row.isOverloaded = totalWeekLoad > bucketEffectiveCapacity + 0.01;
       return row;
     });
   }, [activeWorkCenters, weeklyBuckets, activeProjects]);
@@ -334,14 +348,31 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                             {util}% Ocupação
                           </span>
                         </div>
+
+                        {/* Holiday & Vacation Notice */}
+                        {rowData.hasHolidays && (
+                          <div className="p-1.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] space-y-0.5">
+                            <div className="font-bold flex items-center gap-1">
+                              <span>🏖️ Parada / Feriado no Período:</span>
+                            </div>
+                            {rowData.activeExceptions.map((ex: any) => (
+                              <div key={ex.id} className="text-amber-200 pl-1">
+                                • {ex.title} ({ex.impactType === 'full_closure' ? 'Parada 100%' : `-${ex.capacityReductionPercentage}% cap`})
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         <div className="space-y-1 text-slate-300">
                           <div className="flex justify-between gap-4">
                             <span>Demanda Total:</span>
                             <strong className="text-white">{(totalHours || 0).toLocaleString()}h</strong>
                           </div>
                           <div className="flex justify-between gap-4">
-                            <span>Capacidade Fabril:</span>
-                            <strong className="text-slate-300">{(cap || 0).toLocaleString()}h</strong>
+                            <span>Capacidade Fabril Efetiva:</span>
+                            <strong className={rowData.isFullShutdown ? 'text-rose-400 font-bold' : 'text-slate-300'}>
+                              {(cap || 0).toLocaleString()}h {rowData.nominalCapacity !== cap ? `(Nominal: ${rowData.nominalCapacity}h)` : ''}
+                            </strong>
                           </div>
                           {isOver && (
                             <div className="text-rose-300 text-[11px] font-semibold pt-1 border-t border-slate-800 flex items-center gap-1">

@@ -8,6 +8,7 @@ import {
 } from '../utils/dateValidation';
 import { X, CalendarRange, Save, FolderTree, ShieldCheck } from 'lucide-react';
 import { parseISO, format } from 'date-fns';
+import { DatePickerField } from './DatePickerField';
 
 interface ProjectEditorModalProps {
   isOpen: boolean;
@@ -144,30 +145,20 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
 
           {/* Dates */}
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                Data de Início Global
-              </label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => handleStartDateChange(e.target.value)}
-                className="w-full text-xs p-2.5 border border-slate-300 rounded-lg font-semibold"
-              />
-            </div>
+            <DatePickerField
+              label="Data de Início Global"
+              value={startDate}
+              onChange={(val) => handleStartDateChange(val)}
+              required
+            />
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                Data de Término Global
-              </label>
-              <input
-                type="date"
-                min={startDate}
-                value={endDate}
-                onChange={(e) => handleEndDateChange(e.target.value)}
-                className="w-full text-xs p-2.5 border border-slate-300 rounded-lg font-semibold"
-              />
-            </div>
+            <DatePickerField
+              label="Data de Término Global"
+              min={startDate}
+              value={endDate}
+              onChange={(val) => handleEndDateChange(val)}
+              required
+            />
           </div>
 
           {/* Group Dates Section */}
@@ -193,28 +184,24 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                   <div key={groupName} className="bg-white p-2.5 rounded-lg border border-slate-200 text-[10px] space-y-1">
                     <span className="font-extrabold text-indigo-950 uppercase block">{groupName}</span>
                     <div className="grid grid-cols-2 gap-1.5">
-                      <div>
-                        <label className="block text-[9px] text-slate-500 font-semibold">Início</label>
-                        <input
-                          type="date"
-                          min={startDate}
-                          max={gData?.endDate || endDate}
-                          value={gData?.startDate || ''}
-                          onChange={(e) => handleGroupDateChange(groupName, 'startDate', e.target.value)}
-                          className="w-full text-[10px] border border-slate-300 rounded p-1 bg-white font-semibold"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] text-slate-500 font-semibold">Término</label>
-                        <input
-                          type="date"
-                          min={gData?.startDate || startDate}
-                          max={endDate}
-                          value={gData?.endDate || ''}
-                          onChange={(e) => handleGroupDateChange(groupName, 'endDate', e.target.value)}
-                          className="w-full text-[10px] border border-slate-300 rounded p-1 bg-white font-semibold"
-                        />
-                      </div>
+                      <DatePickerField
+                        label="Início"
+                        size="xs"
+                        min={startDate}
+                        max={gData?.endDate || endDate}
+                        value={gData?.startDate || ''}
+                        onChange={(val) => handleGroupDateChange(groupName, 'startDate', val)}
+                        placeholder="Início..."
+                      />
+                      <DatePickerField
+                        label="Término"
+                        size="xs"
+                        min={gData?.startDate || startDate}
+                        max={endDate}
+                        value={gData?.endDate || ''}
+                        onChange={(val) => handleGroupDateChange(groupName, 'endDate', val)}
+                        placeholder="Término..."
+                      />
                     </div>
                   </div>
                 );

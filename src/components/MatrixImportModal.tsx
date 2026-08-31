@@ -36,6 +36,7 @@ import {
 } from '../utils/matrixImportParser';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { addWeeks, format, parseISO } from 'date-fns';
+import { DatePickerField } from './DatePickerField';
 
 export interface MatrixImportPayload {
   mode: 'append' | 'replace_projects' | 'new_scenario';
@@ -591,14 +592,10 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
 
                   {/* Start Date */}
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                      Data Início do 1º Projeto:
-                    </label>
-                    <input
-                      type="date"
+                    <DatePickerField
+                      label="Data Início do 1º Projeto:"
                       value={globalStartDate}
-                      onChange={(e) => setGlobalStartDate(e.target.value)}
-                      className="w-full p-2 bg-white border border-slate-300 rounded-lg font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      onChange={(val) => setGlobalStartDate(val)}
                     />
                   </div>
 
@@ -687,20 +684,19 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                                 ))}
                               </select>
                             </td>
-                            <td className="py-2 px-3">
-                              <input
-                                type="date"
+                            <td className="py-2 px-3 min-w-[140px]">
+                              <DatePickerField
+                                size="xs"
                                 value={p.startDate}
-                                onChange={(e) => handleUpdateProjectRow(idx, { startDate: e.target.value })}
-                                className="p-1 bg-white border border-slate-200 rounded font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                onChange={(val) => handleUpdateProjectRow(idx, { startDate: val })}
                               />
                             </td>
-                            <td className="py-2 px-3">
-                              <input
-                                type="date"
+                            <td className="py-2 px-3 min-w-[140px]">
+                              <DatePickerField
+                                size="xs"
+                                min={p.startDate}
                                 value={p.endDate}
-                                onChange={(e) => handleUpdateProjectRow(idx, { endDate: e.target.value })}
-                                className="p-1 bg-white border border-slate-200 rounded font-mono text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                onChange={(val) => handleUpdateProjectRow(idx, { endDate: val })}
                               />
                             </td>
                             <td className="py-2 px-3 text-right font-black text-indigo-700">

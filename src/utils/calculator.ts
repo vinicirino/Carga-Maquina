@@ -2,6 +2,7 @@ import {
   parseISO,
   differenceInCalendarDays,
   addWeeks,
+  addDays,
   startOfWeek,
   endOfWeek,
   format,
@@ -14,6 +15,7 @@ import {
   WorkCenterCapacitySummary,
   OverloadAlert,
   SystemRecommendation,
+  CalendarException,
 } from '../types';
 
 export function calculateWeeklyCapacity(wc: WorkCenter): number {
@@ -27,6 +29,74 @@ export function calculateWeeklyCapacity(wc: WorkCenter): number {
 
 export function calculateDailyCapacity(wc: WorkCenter): number {
   return wc.dailyHours * wc.resourcesCount * (wc.efficiencyPercentage / 100);
+}
+
+/**
+ * Calculates effective weekly capacity for a specific work center during a specific week bucket,
+ * taking into account holidays, vacations, and maintenance downtimes.
+ */
+export function calculateEffectiveWeeklyCapacityForBucket(
+  wc: WorkCenter,
+  bucketStart: Date,
+  calendarExceptions: CalendarException[] = []
+): {
+  effectiveCapacity: number;
+  effectiveWorkDays: number;
+  activeExceptions: CalendarException[];
+} {
+  const dailyCap = calculateDailyCapacity(wc);
+  const workDaysPerWeek = Math.max(1, Math.min(7, wc.daysPerWeek || 5));
+  let effectiveWorkDays = 0;
+  const activeExceptionsSet = new Map<string, CalendarException>();
+
+  // Gather all exceptions relevant to this work center (both scenario-wide and WC-specific)
+  const allExceptions = [
+    ...calendarExceptions,
+    ...(wc.calendarExceptions || []),
+  ];
+
+  for (let dayOffset = 0; dayOffset < workDaysPerWeek; dayOffset++) {
+    const currentDay = addDays(bucketStart, dayOffset);
+    const dayStr = format(currentDay, 'yyyy-MM-dd');
+    let dayFactor = 1.0;
+
+    for (const ex of allExceptions) {
+      if (!ex.startDate || !ex.endDate) continue;
+
+      // Check if exception applies to this work center (empty/undefined = global)
+      const appliesToWc =
+        !ex.workCenterIds ||
+        ex.workCenterIds.length === 0 ||
+        ex.workCenterIds.includes(wc.id) ||
+        ex.workCenterIds.includes(wc.name);
+
+      if (!appliesToWc) continue;
+
+      if (dayStr >= ex.startDate && dayStr <= ex.endDate) {
+        activeExceptionsSet.set(ex.id, ex);
+        if (ex.impactType === 'full_closure') {
+          dayFactor = 0;
+          break; // Day completely closed
+        } else if (ex.impactType === 'capacity_reduction') {
+          const reduction = (ex.capacityReductionPercentage || 0) / 100;
+          const factor = Math.max(0, 1 - reduction);
+          if (factor < dayFactor) {
+            dayFactor = factor;
+          }
+        }
+      }
+    }
+
+    effectiveWorkDays += dayFactor;
+  }
+
+  const effectiveCapacity = effectiveWorkDays * dailyCap;
+
+  return {
+    effectiveCapacity,
+    effectiveWorkDays,
+    activeExceptions: Array.from(activeExceptionsSet.values()),
+  };
 }
 
 /**
@@ -65,7 +135,8 @@ const MS_PER_DAY = 86400000;
 
 export function generateWeeklySchedule(
   projects: Project[],
-  workCenters: WorkCenter[]
+  workCenters: WorkCenter[],
+  calendarExceptions: CalendarException[] = []
 ): {
   weeklyBuckets: WeeklyBucket[];
   workCenterSummaries: WorkCenterCapacitySummary[];
@@ -203,7 +274,7 @@ export function generateWeeklySchedule(
   const firstWeekStart = startOfWeek(globalStart, { weekStartsOn: 1 });
   const lastWeekEnd = endOfWeek(globalEnd, { weekStartsOn: 1 });
 
-  // 2. Build weekly buckets with precalculated timestamp ranges
+  // 2. Build weekly buckets with precalculated timestamp ranges and effective capacities
   interface FastBucket extends WeeklyBucket {
     startMs: number;
     endMs: number;
@@ -218,6 +289,26 @@ export function generateWeeklySchedule(
     const weekLabel = `Sem. ${format(currWeekStart, 'ww/yyyy')} (${format(currWeekStart, 'dd/MM/yy')} - ${format(currWeekEnd, 'dd/MM/yy')})`;
     const weekKey = format(currWeekStart, 'yyyy-MM-dd');
 
+    const bucketCapacities: Record<string, number> = {};
+    const bucketWorkDays: Record<string, number> = {};
+    const bucketActiveExceptions: CalendarException[] = [];
+    const seenExceptionIds = new Set<string>();
+
+    for (const wc of activeWorkCenters) {
+      const { effectiveCapacity, effectiveWorkDays, activeExceptions } =
+        calculateEffectiveWeeklyCapacityForBucket(wc, currWeekStart, calendarExceptions);
+
+      bucketCapacities[wc.id] = effectiveCapacity;
+      bucketWorkDays[wc.id] = effectiveWorkDays;
+
+      for (const ex of activeExceptions) {
+        if (!seenExceptionIds.has(ex.id)) {
+          seenExceptionIds.add(ex.id);
+          bucketActiveExceptions.push(ex);
+        }
+      }
+    }
+
     weeklyBuckets.push({
       weekKey,
       startDate: currWeekStart,
@@ -226,6 +317,9 @@ export function generateWeeklySchedule(
       endMs: currWeekEnd.getTime(),
       label: weekLabel,
       workCenterLoads: {},
+      workCenterCapacities: bucketCapacities,
+      effectiveWorkDays: bucketWorkDays,
+      activeHolidays: bucketActiveExceptions,
       projectBreakdown: {},
     });
 
@@ -310,6 +404,77 @@ export function generateWeeklySchedule(
 
       const totalWcDays = Math.max(1, Math.round((wcEndMs - wcStartMs) / MS_PER_DAY) + 1);
 
+      // Gather all calendar exceptions relevant to this work center
+      const allWcExceptions = [
+        ...calendarExceptions,
+        ...(wc.calendarExceptions || []),
+      ];
+
+      const workDaysPerWeek = Math.max(1, Math.min(7, wc.daysPerWeek || 5));
+
+      // Calculate effective working day factor for each day in [wcStart, wcEnd]
+      // Days on full_closure or holidays or weekends receive 0 work weight
+      let totalEffectiveWorkWeight = 0;
+      const bucketWorkWeights: number[] = new Array(weeklyBuckets.length).fill(0);
+
+      const wcStartDateObj = new Date(wcStartMs);
+
+      for (let dayIdx = 0; dayIdx < totalWcDays; dayIdx++) {
+        const curDay = addDays(wcStartDateObj, dayIdx);
+        const curDayMs = curDay.getTime();
+        const curDayStr = format(curDay, 'yyyy-MM-dd');
+        const dayOfWeek = curDay.getDay(); // 0 = Sunday, 1 = Mon, ..., 6 = Sat
+
+        // Check if working day based on daysPerWeek (1=Mon..5=Fri, 6=Sat, 7=Sun)
+        let isStandardWorkDay = false;
+        if (workDaysPerWeek <= 5) {
+          isStandardWorkDay = dayOfWeek >= 1 && dayOfWeek <= 5;
+        } else if (workDaysPerWeek === 6) {
+          isStandardWorkDay = dayOfWeek >= 1 && dayOfWeek <= 6;
+        } else {
+          isStandardWorkDay = true;
+        }
+
+        let dayFactor = isStandardWorkDay ? 1.0 : 0;
+
+        if (dayFactor > 0) {
+          for (const ex of allWcExceptions) {
+            if (!ex.startDate || !ex.endDate) continue;
+            const appliesToWc =
+              !ex.workCenterIds ||
+              ex.workCenterIds.length === 0 ||
+              ex.workCenterIds.includes(wc.id) ||
+              ex.workCenterIds.includes(wc.name);
+
+            if (!appliesToWc) continue;
+
+            if (curDayStr >= ex.startDate && curDayStr <= ex.endDate) {
+              if (ex.impactType === 'full_closure') {
+                dayFactor = 0;
+                break; // Completely stopped day
+              } else if (ex.impactType === 'capacity_reduction') {
+                const reduction = (ex.capacityReductionPercentage || 0) / 100;
+                const factor = Math.max(0, 1 - reduction);
+                if (factor < dayFactor) {
+                  dayFactor = factor;
+                }
+              }
+            }
+          }
+        }
+
+        totalEffectiveWorkWeight += dayFactor;
+
+        // Find which weekly bucket this day falls into
+        for (let b = 0; b < weeklyBuckets.length; b++) {
+          const bkt = weeklyBuckets[b];
+          if (curDayMs >= bkt.startMs && curDayMs <= bkt.endMs + 86399999) {
+            bucketWorkWeights[b] += dayFactor;
+            break;
+          }
+        }
+      }
+
       for (let b = 0; b < weeklyBuckets.length; b++) {
         const bucket = weeklyBuckets[b];
         // Fast bounds check
@@ -317,14 +482,21 @@ export function generateWeeklySchedule(
           continue;
         }
 
-        const overlapStart = Math.max(bucket.startMs, wcStartMs);
-        const overlapEnd = Math.min(bucket.endMs, wcEndMs);
-        const overlapDays = Math.max(0, Math.round((overlapEnd - overlapStart) / MS_PER_DAY) + 1);
+        let hoursInThisWeek = 0;
+        if (totalEffectiveWorkWeight > 0) {
+          const weekWeight = bucketWorkWeights[b] || 0;
+          if (weekWeight <= 0) continue; // 0 hours in holiday / vacation full closure weeks!
+          hoursInThisWeek = totalHours * (weekWeight / totalEffectiveWorkWeight);
+        } else {
+          // Fallback if entire project was scheduled during 100% shutdown
+          const overlapStart = Math.max(bucket.startMs, wcStartMs);
+          const overlapEnd = Math.min(bucket.endMs, wcEndMs);
+          const overlapDays = Math.max(0, Math.round((overlapEnd - overlapStart) / MS_PER_DAY) + 1);
+          if (overlapDays <= 0) continue;
+          hoursInThisWeek = totalHours * (overlapDays / totalWcDays);
+        }
 
-        if (overlapDays <= 0) continue;
-
-        const weekFraction = overlapDays / totalWcDays;
-        const hoursInThisWeek = totalHours * weekFraction;
+        if (hoursInThisWeek <= 0) continue;
 
         bucket.workCenterLoads[wc.id] = (bucket.workCenterLoads[wc.id] || 0) + hoursInThisWeek;
 
@@ -348,9 +520,9 @@ export function generateWeeklySchedule(
   const overloadedWeekSet = new Set<string>();
 
   for (const wc of activeWorkCenters) {
-    const weeklyCap = calculateWeeklyCapacity(wc);
+    const standardWeeklyCap = calculateWeeklyCapacity(wc);
     const dailyCap = calculateDailyCapacity(wc);
-    totalCapacityAllCentersWeekly += weeklyCap;
+    totalCapacityAllCentersWeekly += standardWeeklyCap;
 
     let wcTotalRequiredHours = 0;
     let peakWeeklyLoad = 0;
@@ -383,15 +555,16 @@ export function generateWeeklySchedule(
     // Evaluate each weekly bucket for this WC
     for (const bucket of weeklyBuckets) {
       const load = bucket.workCenterLoads[wc.id] || 0;
+      const effectiveCap = bucket.workCenterCapacities?.[wc.id] ?? standardWeeklyCap;
 
       if (load > peakWeeklyLoad) {
         peakWeeklyLoad = load;
       }
 
-      const util = weeklyCap > 0 ? (load / weeklyCap) * 100 : 0;
+      const util = effectiveCap > 0 ? (load / effectiveCap) * 100 : (load > 0 ? 999 : 0);
       sumWeeklyUtilization += util;
 
-      if (load > weeklyCap + 0.01) {
+      if (load > effectiveCap + 0.01) {
         overloadedWeeksForThisWc++;
         overloadedWorkCenterSet.add(wc.id);
         overloadedWeekSet.add(bucket.weekKey);
@@ -408,23 +581,28 @@ export function generateWeeklySchedule(
           }
         );
 
+        const affectedByHolidays = effectiveCap < standardWeeklyCap;
+        const holidayNames = (bucket.activeHolidays || []).map((h) => h.title);
+
         overloadAlerts.push({
           workCenterId: wc.id,
           workCenterName: wc.name,
           weekKey: bucket.weekKey,
           weekLabel: bucket.label,
-          capacityHours: weeklyCap,
+          capacityHours: effectiveCap,
           demandedHours: load,
-          excessHours: load - weeklyCap,
+          excessHours: load - effectiveCap,
           utilizationPercentage: util,
           contributingProjects: contributing,
+          affectedByHolidays,
+          holidayNames: holidayNames.length > 0 ? holidayNames : undefined,
         });
       }
     }
 
     const avgUtil =
       weeklyBuckets.length > 0 ? sumWeeklyUtilization / weeklyBuckets.length : 0;
-    const maxUtil = weeklyCap > 0 ? (peakWeeklyLoad / weeklyCap) * 100 : 0;
+    const maxUtil = standardWeeklyCap > 0 ? (peakWeeklyLoad / standardWeeklyCap) * 100 : 0;
 
     let status: 'OK' | 'WARNING' | 'CRITICAL' = 'OK';
     if (maxUtil > 120 || overloadedWeeksForThisWc > 2) {
@@ -436,7 +614,7 @@ export function generateWeeklySchedule(
     workCenterSummaries.push({
       workCenter: wc,
       totalRequiredHours: wcTotalRequiredHours,
-      weeklyCapacity: weeklyCap,
+      weeklyCapacity: standardWeeklyCap,
       dailyCapacity: dailyCap,
       peakWeeklyLoad,
       maxUtilizationPercentage: maxUtil,
@@ -446,7 +624,7 @@ export function generateWeeklySchedule(
     });
 
     // Generate recommendation if overloaded
-    if (peakWeeklyLoad > weeklyCap && weeklyCap > 0) {
+    if (peakWeeklyLoad > standardWeeklyCap && standardWeeklyCap > 0) {
       const singleResourceWeeklyCap = wc.dailyHours * wc.daysPerWeek * (wc.efficiencyPercentage / 100);
       const neededResources = Math.ceil(peakWeeklyLoad / singleResourceWeeklyCap);
 
@@ -455,10 +633,10 @@ export function generateWeeklySchedule(
         workCenterName: wc.name,
         currentResources: wc.resourcesCount,
         recommendedResources: Math.max(wc.resourcesCount + 1, neededResources),
-        peakOverloadHours: peakWeeklyLoad - weeklyCap,
+        peakOverloadHours: peakWeeklyLoad - standardWeeklyCap,
         maxUtilization: maxUtil,
-        reason: `Carga máxima semanal de ${peakWeeklyLoad.toFixed(1)}h excede a capacidade instalada (${weeklyCap.toFixed(1)}h) em ${(
-          peakWeeklyLoad - weeklyCap
+        reason: `Carga máxima semanal de ${peakWeeklyLoad.toFixed(1)}h excede a capacidade instalada padrão (${standardWeeklyCap.toFixed(1)}h) em ${(
+          peakWeeklyLoad - standardWeeklyCap
         ).toFixed(1)}h.`,
       });
     }
@@ -485,3 +663,4 @@ export function generateWeeklySchedule(
     },
   };
 }
+

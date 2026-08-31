@@ -602,15 +602,27 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       // If user selected a specific CT under the group
       if (isShowingSpecificWcInGroup && currentSubWcSummary) {
         const wcId = currentSubWcSummary.workCenter.id;
-        const weeklyCap = currentSubWcSummary.weeklyCapacity;
+        const nominalCap = currentSubWcSummary.weeklyCapacity;
+        const wcName = currentSubWcSummary.workCenter.name;
 
         return currentWeeklyBuckets.map((bucket) => {
           const projectLoads = bucket.projectBreakdown[wcId] || {};
+          const effectiveCap = bucket.workCenterCapacities?.[wcId] ?? nominalCap;
+          const activeHolidays = (bucket.activeHolidays || []).filter(
+            (h) =>
+              !h.workCenterIds ||
+              h.workCenterIds.length === 0 ||
+              h.workCenterIds.includes(wcId) ||
+              h.workCenterIds.includes(wcName)
+          );
+
           const row: Record<string, any> = {
             weekLabel: bucket.label.split(' ')[1] || bucket.label,
             fullLabel: bucket.label,
             weekKey: bucket.weekKey,
-            capacity: weeklyCap,
+            capacity: effectiveCap,
+            nominalCapacity: nominalCap,
+            activeHolidays,
             totalLoad: bucket.workCenterLoads[wcId] || 0,
           };
 
@@ -627,14 +639,29 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       if (!currentGroupSummary) return [];
 
       const groupWcs = currentGroupSummary.workCenters;
-      const weeklyCap = currentGroupSummary.weeklyCapacity;
+      const nominalCap = currentGroupSummary.weeklyCapacity;
+      const groupWcIds = new Set(groupWcs.map((w) => w.id).concat(groupWcs.map((w) => w.name)));
 
       return currentWeeklyBuckets.map((bucket) => {
+        let totalEffectiveCap = 0;
+        for (const wc of groupWcs) {
+          totalEffectiveCap += bucket.workCenterCapacities?.[wc.id] ?? calculateWeeklyCapacity(wc);
+        }
+
+        const activeHolidays = (bucket.activeHolidays || []).filter(
+          (h) =>
+            !h.workCenterIds ||
+            h.workCenterIds.length === 0 ||
+            h.workCenterIds.some((id) => groupWcIds.has(id))
+        );
+
         const row: Record<string, any> = {
           weekLabel: bucket.label.split(' ')[1] || bucket.label,
           fullLabel: bucket.label,
           weekKey: bucket.weekKey,
-          capacity: weeklyCap,
+          capacity: totalEffectiveCap,
+          nominalCapacity: nominalCap,
+          activeHolidays,
           totalLoad: 0,
         };
 
@@ -658,15 +685,27 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       if (!selectedIndividualSummary) return [];
 
       const wcId = selectedIndividualSummary.workCenter.id;
-      const weeklyCap = selectedIndividualSummary.weeklyCapacity;
+      const nominalCap = selectedIndividualSummary.weeklyCapacity;
+      const wcName = selectedIndividualSummary.workCenter.name;
 
       return currentWeeklyBuckets.map((bucket) => {
         const projectLoads = bucket.projectBreakdown[wcId] || {};
+        const effectiveCap = bucket.workCenterCapacities?.[wcId] ?? nominalCap;
+        const activeHolidays = (bucket.activeHolidays || []).filter(
+          (h) =>
+            !h.workCenterIds ||
+            h.workCenterIds.length === 0 ||
+            h.workCenterIds.includes(wcId) ||
+            h.workCenterIds.includes(wcName)
+        );
+
         const row: Record<string, any> = {
           weekLabel: bucket.label.split(' ')[1] || bucket.label,
           fullLabel: bucket.label,
           weekKey: bucket.weekKey,
-          capacity: weeklyCap,
+          capacity: effectiveCap,
+          nominalCapacity: nominalCap,
+          activeHolidays,
           totalLoad: bucket.workCenterLoads[wcId] || 0,
         };
 
@@ -1524,13 +1563,35 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                             <strong className="text-white font-mono">{totalLoad.toFixed(1)}h</strong>
                           </div>
                           <div className="flex justify-between">
-                            <span>Capacidade Consolidada:</span>
-                            <strong className="text-slate-400 font-mono">{capacity.toFixed(0)}h</strong>
+                            <span>Capacidade Efetiva:</span>
+                            <strong className="text-emerald-400 font-mono">{capacity.toFixed(0)}h</strong>
                           </div>
+                          {dataRow.nominalCapacity !== undefined && dataRow.nominalCapacity !== capacity && (
+                            <div className="flex justify-between text-[10px] text-slate-400">
+                              <span>Capacidade Nominal (s/ paradas):</span>
+                              <span className="font-mono">{dataRow.nominalCapacity.toFixed(0)}h</span>
+                            </div>
+                          )}
                           {isOver && (
                             <div className="text-rose-400 text-[11px] font-bold pt-1 border-t border-slate-800 flex items-center gap-1">
                               <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                               <span>Sobrecarga de +{(totalLoad - capacity).toFixed(1)}h</span>
+                            </div>
+                          )}
+                          {dataRow.activeHolidays && dataRow.activeHolidays.length > 0 && (
+                            <div className="pt-1.5 mt-1 border-t border-slate-800 text-[11px] text-amber-300 bg-amber-950/40 p-1.5 rounded-lg">
+                              <div className="font-bold flex items-center gap-1 mb-0.5">
+                                <span>🏖️</span>
+                                <span>Parada / Feriado na Semana:</span>
+                              </div>
+                              <div className="text-[10px] text-slate-300">
+                                {dataRow.activeHolidays.map((h: any) => h.title).join(', ')}
+                              </div>
+                              {capacity === 0 && (
+                                <div className="text-[10px] text-amber-400 font-black mt-0.5">
+                                  ⚠️ Parada Total (0h de capacidade útil)
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1922,13 +1983,35 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                             <strong className="text-white font-mono">{totalLoad.toFixed(1)}h</strong>
                           </div>
                           <div className="flex justify-between">
-                            <span>Capacidade Líquida:</span>
-                            <strong className="text-slate-400 font-mono">{capacity.toFixed(0)}h</strong>
+                            <span>Capacidade Efetiva:</span>
+                            <strong className="text-emerald-400 font-mono">{capacity.toFixed(0)}h</strong>
                           </div>
+                          {dataRow.nominalCapacity !== undefined && dataRow.nominalCapacity !== capacity && (
+                            <div className="flex justify-between text-[10px] text-slate-400">
+                              <span>Capacidade Nominal (s/ paradas):</span>
+                              <span className="font-mono">{dataRow.nominalCapacity.toFixed(0)}h</span>
+                            </div>
+                          )}
                           {isOver && (
                             <div className="text-rose-400 text-[11px] font-bold pt-1 border-t border-slate-800 flex items-center gap-1">
                               <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                               <span>Sobrecarga de +{(totalLoad - capacity).toFixed(1)}h</span>
+                            </div>
+                          )}
+                          {dataRow.activeHolidays && dataRow.activeHolidays.length > 0 && (
+                            <div className="pt-1.5 mt-1 border-t border-slate-800 text-[11px] text-amber-300 bg-amber-950/40 p-1.5 rounded-lg">
+                              <div className="font-bold flex items-center gap-1 mb-0.5">
+                                <span>🏖️</span>
+                                <span>Parada / Feriado no CT:</span>
+                              </div>
+                              <div className="text-[10px] text-slate-300">
+                                {dataRow.activeHolidays.map((h: any) => h.title).join(', ')}
+                              </div>
+                              {capacity === 0 && (
+                                <div className="text-[10px] text-amber-400 font-black mt-0.5">
+                                  ⚠️ Posto Fechado (0h de capacidade útil)
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>

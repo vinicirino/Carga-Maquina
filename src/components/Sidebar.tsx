@@ -30,6 +30,7 @@ import {
   Printer,
   FileDown,
   FileUp,
+  Palmtree,
 } from 'lucide-react';
 import { PlanningScenario } from '../types';
 
@@ -39,6 +40,8 @@ interface SidebarProps {
   onOpenJsonModal: () => void;
   onOpenWorkCenterModal: () => void;
   onOpenTurbineTypesModal?: () => void;
+  onOpenCalendarModal?: () => void;
+  calendarEventsCount?: number;
   onOpenNewProjectModal: () => void;
   onOpenTurbineProjectModal: () => void;
   onOpenMatrixModal?: () => void;
@@ -65,6 +68,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenJsonModal,
   onOpenWorkCenterModal,
   onOpenTurbineTypesModal,
+  onOpenCalendarModal,
+  calendarEventsCount = 0,
   onOpenNewProjectModal,
   onOpenTurbineProjectModal,
   onOpenMatrixModal,
@@ -343,13 +348,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-2 py-1">
+            <div className="flex flex-col items-center gap-1.5 py-1">
+              <button
+                onClick={onOpenManagerModal}
+                className="p-2 text-indigo-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                title={`Cenário Ativo: ${activeScenario?.name} (Clique para gerenciar cenários)`}
+              >
+                <GitBranch className="w-4 h-4 text-indigo-400" />
+              </button>
+              {isScenarioModified && (
+                <button
+                  onClick={onSaveCurrentScenario}
+                  className="p-2 text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  title="Salvar Alterações no Cenário Ativo"
+                >
+                  <Save className="w-4 h-4 animate-bounce" />
+                </button>
+              )}
+              <button
+                onClick={onOpenNewScenarioModal}
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                title="Criar Novo Cenário"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
               <button
                 onClick={onOpenCompareModal}
-                className="p-2 text-indigo-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                title={`Cenários (${scenarios.length}) - Comparar`}
+                className="p-2 text-purple-400 hover:text-purple-200 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                title={`Comparar Cenários (${scenarios.length})`}
               >
-                <GitBranch className="w-4 h-4" />
+                <BarChart3 className="w-4 h-4" />
               </button>
               {onOpenScenarioImportExportModal && (
                 <button
@@ -358,15 +386,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title="Importar / Exportar Cenários (.json)"
                 >
                   <FileDown className="w-4 h-4" />
-                </button>
-              )}
-              {isScenarioModified && (
-                <button
-                  onClick={onSaveCurrentScenario}
-                  className="p-2 text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                  title="Salvar Alterações no Cenário"
-                >
-                  <Save className="w-4 h-4 animate-bounce" />
                 </button>
               )}
             </div>
@@ -425,6 +444,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <SlidersHorizontal className="w-4 h-4 text-indigo-400 shrink-0" />
               {!isCollapsed && <span className="truncate">Centros de Trabalho</span>}
             </button>
+
+            {/* Calendário de Férias e Feriados */}
+            {onOpenCalendarModal && (
+              <button
+                onClick={() => {
+                  onOpenCalendarModal();
+                  setIsMobileOpen(false);
+                }}
+                title={isCollapsed ? `Férias e Feriados (${calendarEventsCount} eventos)` : undefined}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-800 transition-colors cursor-pointer ${
+                  isCollapsed ? 'justify-center px-2' : ''
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Palmtree className="w-4 h-4 text-amber-400 shrink-0" />
+                  {!isCollapsed && <span className="truncate">Férias & Feriados</span>}
+                </div>
+                {!isCollapsed && calendarEventsCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-400/10 text-amber-400 border border-amber-400/20">
+                    {calendarEventsCount}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* Cadastro de Curva S Modal */}
             {onOpenTurbineTypesModal && (

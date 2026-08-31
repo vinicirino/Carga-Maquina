@@ -1,22 +1,25 @@
 import { PlanningScenario, DEFAULT_SECTOR_GROUPS } from '../types';
 import { INITIAL_DATA } from './initialData';
+import { DEFAULT_CALENDAR_EXCEPTIONS } from './defaultCalendar';
 
 export function getInitialScenarios(): PlanningScenario[] {
   const baseWcs = INITIAL_DATA.workCenters;
   const baseProjects = INITIAL_DATA.projects;
   const baseGroups = DEFAULT_SECTOR_GROUPS;
+  const baseCalendarExceptions = DEFAULT_CALENDAR_EXCEPTIONS;
 
   // Scenario 1: Operational Baseline
   const scenario1: PlanningScenario = {
     id: 'scen-1-baseline',
     name: 'Cenário 1: Base Operacional (Atual)',
-    description: 'Turno padrão de 8h/dia, 5 dias/semana. Recursos e cronogramas originais conforme planejamento fabril.',
+    description: 'Turno padrão de 8h/dia, 5 dias/semana. Recursos e cronogramas originais conforme planejamento fabril com calendário padrão de feriados e férias.',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     isBaseline: true,
     workCenters: JSON.parse(JSON.stringify(baseWcs)),
     projects: JSON.parse(JSON.stringify(baseProjects)),
     sectorGroups: [...baseGroups],
+    calendarExceptions: JSON.parse(JSON.stringify(baseCalendarExceptions)),
   };
 
   // Scenario 2: Expanded Shift & Capacity
@@ -48,6 +51,7 @@ export function getInitialScenarios(): PlanningScenario[] {
     workCenters: scenario2Wcs,
     projects: JSON.parse(JSON.stringify(baseProjects)),
     sectorGroups: [...baseGroups],
+    calendarExceptions: JSON.parse(JSON.stringify(baseCalendarExceptions)),
   };
 
   // Scenario 3: Staggered Sector Schedules
@@ -75,6 +79,7 @@ export function getInitialScenarios(): PlanningScenario[] {
     workCenters: JSON.parse(JSON.stringify(baseWcs)),
     projects: scenario3Projects,
     sectorGroups: [...baseGroups],
+    calendarExceptions: JSON.parse(JSON.stringify(baseCalendarExceptions)),
   };
 
   return [scenario1, scenario2, scenario3];

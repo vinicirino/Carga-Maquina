@@ -105,6 +105,7 @@ export function exportSingleScenarioToJson(scenario: PlanningScenario): string {
       sectorGroups: scenario.sectorGroups && scenario.sectorGroups.length > 0
         ? scenario.sectorGroups
         : DEFAULT_SECTOR_GROUPS,
+      calendarExceptions: scenario.calendarExceptions || [],
       workCenters: scenario.workCenters.map((wc) => ({
         id: wc.id,
         name: wc.name,
@@ -299,6 +300,8 @@ export function parseScenarioJson(rawInput: string): ParsedScenarioResult {
           )
         : [];
 
+      const calendarExceptions = Array.isArray(s.calendarExceptions) ? s.calendarExceptions : [];
+
       validatedScenarios.push({
         id: s.id || `scen-${i + 1}-${Date.now()}`,
         name: String(s.name || `Cenário ${i + 1}`).trim(),
@@ -309,6 +312,7 @@ export function parseScenarioJson(rawInput: string): ParsedScenarioResult {
         workCenters,
         projects,
         sectorGroups,
+        calendarExceptions,
       });
     }
 
@@ -418,6 +422,10 @@ export function parseScenarioJson(rawInput: string): ParsedScenarioResult {
     const scenarioName = String(rawScenObj.name || parsed.summary?.scenarioName || parsed.name || 'Cenário Importado').trim();
     const scenarioDescription = String(rawScenObj.description || parsed.summary?.description || parsed.description || '');
 
+    const calendarExceptions = Array.isArray(rawScenObj.calendarExceptions)
+      ? rawScenObj.calendarExceptions
+      : (Array.isArray(parsed.calendarExceptions) ? parsed.calendarExceptions : []);
+
     const singleScenario: PlanningScenario = {
       id: rawScenObj.id || `scen-${Date.now()}`,
       name: scenarioName,
@@ -428,6 +436,7 @@ export function parseScenarioJson(rawInput: string): ParsedScenarioResult {
       workCenters,
       projects,
       sectorGroups,
+      calendarExceptions,
     };
 
     return {
