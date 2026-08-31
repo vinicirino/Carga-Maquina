@@ -10,7 +10,7 @@ import {
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { calculateWeeklyCapacity, generateWeeklySchedule } from '../utils/calculator';
 import { getProjectTotalHours } from '../utils/dateValidation';
-import { parseISO, format, addDays } from 'date-fns';
+import { parseISO, format, addDays, differenceInCalendarDays, isAfter } from 'date-fns';
 import {
   Search,
   AlertTriangle,
@@ -33,6 +33,12 @@ import {
   Check,
   TrendingDown,
   TrendingUp,
+  Printer,
+  Cpu,
+  Factory,
+  X,
+  Sliders,
+  Flame,
 } from 'lucide-react';
 import {
   BarChart,
@@ -57,10 +63,11 @@ interface WorkCenterAnalysisProps {
   onUpdateWorkCenter: (updated: WorkCenter) => void;
   onUpdateProject?: (updated: Project) => void;
   onSelectWorkCenterForSimulation?: (wcId: string) => void;
+  onOpenPrintReportModal?: () => void;
 }
 
 /**
- * Helper to shift a project's timeline (including work center and sector group custom dates)
+ * Helper to shift an entire project's timeline (including work center and sector group custom dates)
  */
 function shiftProjectDates(project: Project, offsetDays: number): Project {
   if (!offsetDays || offsetDays === 0) return project;
@@ -114,6 +121,158 @@ function shiftProjectDates(project: Project, offsetDays: number): Project {
   }
 }
 
+/**
+ * Helper to get the effective original start and end dates for a specific sector group in a project
+ */
+function getProjectGroupOriginalDates(
+  project: Project,
+  groupName: string,
+  workCenters: WorkCenter[]
+): { startDate: string; endDate: string } {
+  try {
+    // 1. Direct groupDates on project
+    if (project.groupDates?.[groupName]?.startDate && project.groupDates?.[groupName]?.endDate) {
+      return {
+        startDate: project.groupDates[groupName].startDate!,
+        endDate: project.groupDates[groupName].endDate!,
+      };
+    }
+
+    // 2. Turbine customSectorCurves
+    if (project.turbineConfig?.customSectorCurves?.[groupName]) {
+      const curveCfg = project.turbineConfig.customSectorCurves[groupName];
+      const pStart = parseISO(project.startDate);
+      const pEnd = parseISO(project.endDate);
+      const totalDays = Math.max(1, differenceInCalendarDays(pEnd, pStart) + 1);
+      const startPctSafe = Math.max(0, Math.min(100, curveCfg.startPct || 0));
+      const endPctSafe = Math.max(startPctSafe + 1, Math.min(100, curveCfg.endPct || 100));
+
+      const startOffsetDays = Math.round((startPctSafe / 100) * (totalDays - 1));
+      const endOffsetDays = Math.round((endPctSafe / 100) * (totalDays - 1));
+
+      const gStart = addDays(pStart, startOffsetDays);
+      const gEnd = addDays(pStart, Math.max(startOffsetDays + 1, endOffsetDays));
+
+      return {
+        startDate: format(gStart, 'yyyy-MM-dd'),
+        endDate: format(isAfter(gEnd, pEnd) ? pEnd : gEnd, 'yyyy-MM-dd'),
+      };
+    }
+
+    // 3. WorkCenterDates matching this group
+    if (project.workCenterDates) {
+      const groupWcIds = new Set(
+        workCenters
+          .filter((wc) => getWorkCenterCategory(wc) === groupName)
+          .map((wc) => wc.id)
+      );
+
+      let foundStart: string | null = null;
+      let foundEnd: string | null = null;
+
+      for (const [key, val] of Object.entries(project.workCenterDates)) {
+        if (!val) continue;
+        if (groupWcIds.has(key) || key.trim().toUpperCase() === groupName.trim().toUpperCase()) {
+          if (val.startDate && (!foundStart || val.startDate < foundStart)) {
+            foundStart = val.startDate;
+          }
+          if (val.endDate && (!foundEnd || val.endDate > foundEnd)) {
+            foundEnd = val.endDate;
+          }
+        }
+      }
+
+      if (foundStart && foundEnd) {
+        return { startDate: foundStart, endDate: foundEnd };
+      }
+    }
+
+    // Fallback: overall project dates
+    return {
+      startDate: project.startDate,
+      endDate: project.endDate,
+    };
+  } catch (e) {
+    console.error('Error getting group dates:', e);
+    return {
+      startDate: project.startDate,
+      endDate: project.endDate,
+    };
+  }
+}
+
+/**
+ * Helper to shift a project's timeline and/or individual sector groups within the project
+ */
+function shiftProjectAndGroups(
+  project: Project,
+  projectOffsetDays: number,
+  groupOffsets: Record<string, number>,
+  workCenters: WorkCenter[]
+): Project {
+  let updatedProject = project;
+
+  // Step 1: Shift entire project dates if requested
+  if (projectOffsetDays && projectOffsetDays !== 0) {
+    updatedProject = shiftProjectDates(updatedProject, projectOffsetDays);
+  }
+
+  // Step 2: Apply individual sector group offsets if any
+  const hasGroupOffsets = Object.values(groupOffsets).some((val) => typeof val === 'number' && val !== 0);
+  if (!hasGroupOffsets) {
+    return updatedProject;
+  }
+
+  try {
+    const newGroupDates: Record<string, { startDate?: string; endDate?: string }> = {
+      ...(updatedProject.groupDates || {}),
+    };
+    const newWcDates: Record<string, { startDate?: string; endDate?: string }> = {
+      ...(updatedProject.workCenterDates || {}),
+    };
+
+    let minGroupStart = updatedProject.startDate;
+    let maxGroupEnd = updatedProject.endDate;
+
+    for (const [grpName, offsetDays] of Object.entries(groupOffsets)) {
+      if (!offsetDays || offsetDays === 0) continue;
+
+      const baseGroupDates = getProjectGroupOriginalDates(updatedProject, grpName, workCenters);
+      const sDate = parseISO(baseGroupDates.startDate);
+      const eDate = parseISO(baseGroupDates.endDate);
+      const newStartDate = format(addDays(sDate, offsetDays), 'yyyy-MM-dd');
+      const newEndDate = format(addDays(eDate, offsetDays), 'yyyy-MM-dd');
+
+      newGroupDates[grpName] = {
+        startDate: newStartDate,
+        endDate: newEndDate,
+      };
+
+      // Also assign specific work center dates for all work centers in this group
+      workCenters.forEach((wc) => {
+        if (getWorkCenterCategory(wc) === grpName) {
+          newWcDates[wc.id] = { startDate: newStartDate, endDate: newEndDate };
+          newWcDates[wc.name] = { startDate: newStartDate, endDate: newEndDate };
+        }
+      });
+
+      if (newStartDate < minGroupStart) minGroupStart = newStartDate;
+      if (newEndDate > maxGroupEnd) maxGroupEnd = newEndDate;
+    }
+
+    return {
+      ...updatedProject,
+      startDate: minGroupStart < updatedProject.startDate ? minGroupStart : updatedProject.startDate,
+      endDate: maxGroupEnd > updatedProject.endDate ? maxGroupEnd : updatedProject.endDate,
+      groupDates: newGroupDates,
+      workCenterDates: newWcDates,
+    };
+  } catch (e) {
+    console.error('Error shifting project groups:', e);
+    return updatedProject;
+  }
+}
+
 export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
   workCenters,
   summaries,
@@ -124,6 +283,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
   initialWcId,
   onUpdateWorkCenter,
   onUpdateProject,
+  onOpenPrintReportModal,
 }) => {
   // Mode: 'GROUP' (Consolidado por Agrupador de Setor) or 'INDIVIDUAL' (Por Centro de Trabalho)
   const [viewMode, setViewMode] = useState<'GROUP' | 'INDIVIDUAL'>('GROUP');
@@ -132,6 +292,9 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
 
   // Selected Group for GROUP mode: 'ALL' means "Todos os Agrupadores (Fábrica Completa)" or specific group name
   const [selectedGroup, setSelectedGroup] = useState<string>(initialSectorFilter || 'ALL');
+
+  // Selected specific WorkCenter (CT) within the selected group (or 'ALL' for consolidated group chart)
+  const [selectedSubWcId, setSelectedSubWcId] = useState<string>(initialWcId || 'ALL');
 
   // Filter by sector group in INDIVIDUAL mode ('ALL' or specific group name)
   const [selectedSectorFilter, setSelectedSectorFilter] = useState<string>(initialSectorFilter || 'ALL');
@@ -146,11 +309,14 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     SOLDA: true,
   });
 
-  // --- INTERACTIVE PROJECT SHIFTING SIMULATION STATE ---
+  // --- INTERACTIVE PROJECT & GROUP SHIFTING SIMULATION STATE ---
   const activeProjects = useMemo(() => projects.filter((p) => p.enabled !== false), [projects]);
   const [selectedSimProjectId, setSelectedSimProjectId] = useState<string>('');
+  const [selectedSimScope, setSelectedSimScope] = useState<string>('ALL'); // 'ALL' = whole project, or specific group name (e.g. 'SOLDA')
   const [projectShiftDays, setProjectShiftDays] = useState<number>(0);
-  const deferredShiftDays = useDeferredValue(projectShiftDays);
+  const [groupShifts, setGroupShifts] = useState<Record<string, number>>({});
+  const deferredProjectShiftDays = useDeferredValue(projectShiftDays);
+  const deferredGroupShifts = useDeferredValue(groupShifts);
   const [saveToast, setSaveToast] = useState<string | null>(null);
   const [showAllLegends, setShowAllLegends] = useState(false);
 
@@ -167,17 +333,35 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     return activeProjects.find((p) => p.id === currentSimProjectId) || null;
   }, [activeProjects, currentSimProjectId]);
 
-  // Dynamically calculate effective projects with shift simulation applied
+  // Check if simulation has active non-zero shifts
+  const hasActiveSimulation = useMemo(() => {
+    return (
+      deferredProjectShiftDays !== 0 ||
+      Object.values(deferredGroupShifts).some((v) => typeof v === 'number' && v !== 0)
+    );
+  }, [deferredProjectShiftDays, deferredGroupShifts]);
+
+  // Dynamically calculate effective projects with shift simulation applied (both project and group level)
   const effectiveProjects = useMemo(() => {
-    if (!deferredShiftDays || deferredShiftDays === 0 || !currentSimProjectId) {
+    if (!hasActiveSimulation || !currentSimProjectId) {
       return projects;
     }
-    return projects.map((p) => (p.id === currentSimProjectId ? shiftProjectDates(p, deferredShiftDays) : p));
-  }, [projects, currentSimProjectId, deferredShiftDays]);
+    return projects.map((p) => {
+      if (p.id === currentSimProjectId) {
+        return shiftProjectAndGroups(p, deferredProjectShiftDays, deferredGroupShifts, workCenters);
+      }
+      return p;
+    });
+  }, [projects, currentSimProjectId, hasActiveSimulation, deferredProjectShiftDays, deferredGroupShifts, workCenters]);
+
+  // Effective simulated project object
+  const effectiveSimProject = useMemo(() => {
+    return effectiveProjects.find((p) => p.id === currentSimProjectId) || selectedSimProject;
+  }, [effectiveProjects, currentSimProjectId, selectedSimProject]);
 
   // Dynamically recalculate weekly schedule in real time during simulation
   const effectiveSchedule = useMemo(() => {
-    if (!deferredShiftDays || deferredShiftDays === 0) {
+    if (!hasActiveSimulation) {
       return {
         weeklyBuckets,
         workCenterSummaries: summaries,
@@ -188,7 +372,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       weeklyBuckets: result.weeklyBuckets,
       workCenterSummaries: result.workCenterSummaries,
     };
-  }, [effectiveProjects, workCenters, deferredShiftDays, weeklyBuckets, summaries]);
+  }, [effectiveProjects, workCenters, hasActiveSimulation, weeklyBuckets, summaries]);
 
   const currentWeeklyBuckets = effectiveSchedule.weeklyBuckets;
   const currentSummaries = effectiveSchedule.workCenterSummaries;
@@ -367,6 +551,23 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     return found || allFactorySummary;
   }, [sectorSummaries, selectedGroup, allFactorySummary]);
 
+  // Work centers belonging to the current selected group in GROUP mode
+  const currentGroupWorkCenters = useMemo(() => {
+    if (selectedGroup === 'ALL') {
+      return activeWorkCenters;
+    }
+    return activeWorkCenters.filter((wc) => getWorkCenterCategory(wc) === selectedGroup);
+  }, [selectedGroup, activeWorkCenters]);
+
+  // Specific work center summary if one is selected in sub-filter
+  const currentSubWcSummary = useMemo(() => {
+    if (selectedSubWcId === 'ALL') return null;
+    return currentSummaries.find((s) => s.workCenter.id === selectedSubWcId) || null;
+  }, [selectedSubWcId, currentSummaries]);
+
+  // Flag: whether GROUP mode is currently drilled down into a specific CT
+  const isShowingSpecificWcInGroup = viewMode === 'GROUP' && selectedSubWcId !== 'ALL' && currentSubWcSummary !== null;
+
   // Filtered list of individual summaries for INDIVIDUAL mode
   const filteredIndividualSummaries = useMemo(() => {
     return currentSummaries.filter((s) => {
@@ -395,9 +596,34 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     return filteredIndividualSummaries[0] || currentSummaries[0] || null;
   }, [currentSummaries, selectedWcId, filteredIndividualSummaries]);
 
-  // Chart data: GROUP mode (specific or ALL) or INDIVIDUAL mode
+  // Chart data: GROUP mode (consolidated or specific CT) or INDIVIDUAL mode
   const chartData = useMemo(() => {
     if (viewMode === 'GROUP') {
+      // If user selected a specific CT under the group
+      if (isShowingSpecificWcInGroup && currentSubWcSummary) {
+        const wcId = currentSubWcSummary.workCenter.id;
+        const weeklyCap = currentSubWcSummary.weeklyCapacity;
+
+        return currentWeeklyBuckets.map((bucket) => {
+          const projectLoads = bucket.projectBreakdown[wcId] || {};
+          const row: Record<string, any> = {
+            weekLabel: bucket.label.split(' ')[1] || bucket.label,
+            fullLabel: bucket.label,
+            weekKey: bucket.weekKey,
+            capacity: weeklyCap,
+            totalLoad: bucket.workCenterLoads[wcId] || 0,
+          };
+
+          for (const proj of effectiveProjects) {
+            if (proj.enabled !== false) {
+              row[proj.id] = projectLoads[proj.id] || 0;
+            }
+          }
+
+          return row;
+        });
+      }
+
       if (!currentGroupSummary) return [];
 
       const groupWcs = currentGroupSummary.workCenters;
@@ -453,24 +679,36 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
         return row;
       });
     }
-  }, [viewMode, currentGroupSummary, selectedIndividualSummary, currentWeeklyBuckets, effectiveProjects]);
+  }, [viewMode, isShowingSpecificWcInGroup, currentSubWcSummary, currentGroupSummary, selectedIndividualSummary, currentWeeklyBuckets, effectiveProjects]);
 
   // Dynamic Y domain with headroom
   const maxYValue = useMemo(() => {
     const weeklyCap =
       viewMode === 'GROUP'
-        ? currentGroupSummary?.weeklyCapacity || 0
+        ? isShowingSpecificWcInGroup && currentSubWcSummary
+          ? currentSubWcSummary.weeklyCapacity
+          : currentGroupSummary?.weeklyCapacity || 0
         : selectedIndividualSummary?.weeklyCapacity || 0;
 
     const maxBarLoad = Math.max(...chartData.map((d) => d.totalLoad || 0), 0);
     const highest = Math.max(maxBarLoad, weeklyCap);
     if (highest === 0) return 100;
     return Math.ceil(highest * 1.2);
-  }, [viewMode, currentGroupSummary, selectedIndividualSummary, chartData]);
+  }, [viewMode, isShowingSpecificWcInGroup, currentSubWcSummary, currentGroupSummary, selectedIndividualSummary, chartData]);
 
   // Projects that actively have hours in the current active group or work center
   const projectsInCurrentView = useMemo(() => {
     if (viewMode === 'GROUP') {
+      if (isShowingSpecificWcInGroup && currentSubWcSummary) {
+        const wcId = currentSubWcSummary.workCenter.id;
+        return effectiveProjects.filter((p) => {
+          if (p.enabled === false) return false;
+          return currentWeeklyBuckets.some((bucket) => {
+            return (bucket.projectBreakdown[wcId]?.[p.id] || 0) > 0;
+          });
+        });
+      }
+
       if (!currentGroupSummary) return [];
       const groupWcIds = currentGroupSummary.workCenters.map((wc) => wc.id);
       return effectiveProjects.filter((p) => {
@@ -492,11 +730,11 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
         });
       });
     }
-  }, [viewMode, currentGroupSummary, selectedIndividualSummary, currentWeeklyBuckets, effectiveProjects]);
+  }, [viewMode, isShowingSpecificWcInGroup, currentSubWcSummary, currentGroupSummary, selectedIndividualSummary, currentWeeklyBuckets, effectiveProjects]);
 
   // Impact metrics comparison: Original baseline vs Simulated shifted state
   const simulationImpact = useMemo(() => {
-    if (!deferredShiftDays || deferredShiftDays === 0) {
+    if (!hasActiveSimulation) {
       return null;
     }
 
@@ -506,16 +744,26 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     let targetCapacity = 0;
 
     if (viewMode === 'GROUP') {
-      const groupWcs = currentGroupSummary?.workCenters || [];
-      targetCapacity = currentGroupSummary?.weeklyCapacity || 0;
-
-      for (const bucket of weeklyBuckets) {
-        let wLoad = 0;
-        for (const wc of groupWcs) {
-          wLoad += bucket.workCenterLoads[wc.id] || 0;
+      if (isShowingSpecificWcInGroup && currentSubWcSummary) {
+        const wcId = currentSubWcSummary.workCenter.id;
+        targetCapacity = currentSubWcSummary.weeklyCapacity || 0;
+        for (const bucket of weeklyBuckets) {
+          const wLoad = bucket.workCenterLoads[wcId] || 0;
+          if (wLoad > baselinePeak) baselinePeak = wLoad;
+          if (targetCapacity > 0 && wLoad > targetCapacity) baselineOverloadedWeeks++;
         }
-        if (wLoad > baselinePeak) baselinePeak = wLoad;
-        if (targetCapacity > 0 && wLoad > targetCapacity) baselineOverloadedWeeks++;
+      } else {
+        const groupWcs = currentGroupSummary?.workCenters || [];
+        targetCapacity = currentGroupSummary?.weeklyCapacity || 0;
+
+        for (const bucket of weeklyBuckets) {
+          let wLoad = 0;
+          for (const wc of groupWcs) {
+            wLoad += bucket.workCenterLoads[wc.id] || 0;
+          }
+          if (wLoad > baselinePeak) baselinePeak = wLoad;
+          if (targetCapacity > 0 && wLoad > targetCapacity) baselineOverloadedWeeks++;
+        }
       }
     } else {
       const wcId = selectedIndividualSummary?.workCenter.id;
@@ -530,8 +778,14 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       }
     }
 
-    const simulatedPeak = currentGroupSummary?.peakWeeklyLoad || 0;
-    const simulatedOverloadedWeeks = currentGroupSummary?.overloadedWeeksCount || 0;
+    const simulatedPeak =
+      isShowingSpecificWcInGroup && currentSubWcSummary
+        ? currentSubWcSummary.peakWeeklyLoad || 0
+        : currentGroupSummary?.peakWeeklyLoad || 0;
+    const simulatedOverloadedWeeks =
+      isShowingSpecificWcInGroup && currentSubWcSummary
+        ? currentSubWcSummary.overloadedWeeksCount || 0
+        : currentGroupSummary?.overloadedWeeksCount || 0;
     const peakDelta = simulatedPeak - baselinePeak;
     const isRelieved = peakDelta < 0 || simulatedOverloadedWeeks < baselineOverloadedWeeks;
 
@@ -544,7 +798,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
       isRelieved,
       targetCapacity,
     };
-  }, [deferredShiftDays, viewMode, currentGroupSummary, selectedIndividualSummary, weeklyBuckets]);
+  }, [hasActiveSimulation, viewMode, isShowingSpecificWcInGroup, currentSubWcSummary, currentGroupSummary, selectedIndividualSummary, weeklyBuckets]);
 
   const handleResourceCountChange = (wc: WorkCenter, delta: number) => {
     const newCount = Math.max(1, wc.resourcesCount + delta);
@@ -568,36 +822,152 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
     setViewMode('INDIVIDUAL');
   };
 
+  // Extract all distinct sector groups that exist in the currently selected simulation project
+  const selectedProjectGroups = useMemo(() => {
+    if (!selectedSimProject) return [];
+    const grpMap = new Map<string, { groupName: string; hours: number; workCenters: WorkCenter[] }>();
+
+    for (const wc of activeWorkCenters) {
+      const cat = getWorkCenterCategory(wc);
+      let hrs = 0;
+      if (selectedSimProject.workCenterHours) {
+        hrs =
+          selectedSimProject.workCenterHours[wc.id] ??
+          selectedSimProject.workCenterHours[wc.name] ??
+          0;
+      }
+      if (hrs > 0) {
+        if (!grpMap.has(cat)) {
+          grpMap.set(cat, { groupName: cat, hours: 0, workCenters: [] });
+        }
+        const item = grpMap.get(cat)!;
+        item.hours += hrs;
+        item.workCenters.push(wc);
+      }
+    }
+
+    // Include groups configured in groupDates or turbineConfig
+    if (selectedSimProject.groupDates) {
+      for (const cat of Object.keys(selectedSimProject.groupDates)) {
+        if (!grpMap.has(cat)) {
+          grpMap.set(cat, { groupName: cat, hours: 0, workCenters: [] });
+        }
+      }
+    }
+    if (selectedSimProject.turbineConfig?.customSectorCurves) {
+      for (const cat of Object.keys(selectedSimProject.turbineConfig.customSectorCurves)) {
+        if (!grpMap.has(cat)) {
+          grpMap.set(cat, { groupName: cat, hours: 0, workCenters: [] });
+        }
+      }
+    }
+
+    return Array.from(grpMap.values()).sort((a, b) => b.hours - a.hours);
+  }, [selectedSimProject, activeWorkCenters]);
+
+  // Current shift value for active target (either whole project or selected group)
+  const currentSimShiftValue = useMemo(() => {
+    if (selectedSimScope === 'ALL') {
+      return projectShiftDays;
+    }
+    return groupShifts[selectedSimScope] || 0;
+  }, [selectedSimScope, projectShiftDays, groupShifts]);
+
+  const handleSetCurrentShift = (val: number) => {
+    if (selectedSimScope === 'ALL') {
+      setProjectShiftDays(val);
+    } else {
+      setGroupShifts((prev) => ({
+        ...prev,
+        [selectedSimScope]: val,
+      }));
+    }
+  };
+
+  const handleStepCurrentShift = (delta: number) => {
+    if (selectedSimScope === 'ALL') {
+      setProjectShiftDays((prev) => prev + delta);
+    } else {
+      setGroupShifts((prev) => ({
+        ...prev,
+        [selectedSimScope]: (prev[selectedSimScope] || 0) + delta,
+      }));
+    }
+  };
+
+  const handleResetCurrentShift = () => {
+    if (selectedSimScope === 'ALL') {
+      setProjectShiftDays(0);
+    } else {
+      setGroupShifts((prev) => ({
+        ...prev,
+        [selectedSimScope]: 0,
+      }));
+    }
+  };
+
+  const handleResetAllShifts = () => {
+    setProjectShiftDays(0);
+    setGroupShifts({});
+  };
+
   const handleApplyShiftToProject = () => {
-    if (!selectedSimProject || projectShiftDays === 0) return;
-    const updated = shiftProjectDates(selectedSimProject, projectShiftDays);
+    if (!selectedSimProject || !hasActiveSimulation) return;
+    const updated = shiftProjectAndGroups(selectedSimProject, projectShiftDays, groupShifts, workCenters);
     if (onUpdateProject) {
       onUpdateProject(updated);
     }
+
+    const descriptions: string[] = [];
+    if (projectShiftDays !== 0) {
+      descriptions.push(`Projeto: ${projectShiftDays > 0 ? '+' : ''}${projectShiftDays}d`);
+    }
+    for (const [grp, offVal] of Object.entries(groupShifts)) {
+      const off = Number(offVal) || 0;
+      if (off !== 0) {
+        descriptions.push(`${grp}: ${off > 0 ? '+' : ''}${off}d`);
+      }
+    }
+
     setProjectShiftDays(0);
-    setSaveToast(`Cronograma de "${updated.name}" atualizado com sucesso (${projectShiftDays > 0 ? '+' : ''}${projectShiftDays} dias)!`);
+    setGroupShifts({});
+    setSaveToast(`Cronograma de "${updated.name}" atualizado (${descriptions.join(', ') || 'Salvo'})!`);
     setTimeout(() => setSaveToast(null), 4000);
   };
 
-  const handleResetShift = () => {
-    setProjectShiftDays(0);
-  };
-
-  // Preview dates of shifted project
-  const simulatedProjectDates = useMemo(() => {
-    if (!selectedSimProject) return { start: '-', end: '-' };
-    if (projectShiftDays === 0) {
+  // Preview dates of shifted target (project or specific group)
+  const simulatedTargetDates = useMemo(() => {
+    if (!selectedSimProject) {
       return {
-        start: format(parseISO(selectedSimProject.startDate), 'dd/MM/yyyy'),
-        end: format(parseISO(selectedSimProject.endDate), 'dd/MM/yyyy'),
+        originalStart: '-',
+        originalEnd: '-',
+        simulatedStart: '-',
+        simulatedEnd: '-',
       };
     }
-    const shifted = shiftProjectDates(selectedSimProject, projectShiftDays);
+
+    if (selectedSimScope === 'ALL') {
+      const origStart = format(parseISO(selectedSimProject.startDate), 'dd/MM/yyyy');
+      const origEnd = format(parseISO(selectedSimProject.endDate), 'dd/MM/yyyy');
+      const simStart = format(parseISO(effectiveSimProject.startDate), 'dd/MM/yyyy');
+      const simEnd = format(parseISO(effectiveSimProject.endDate), 'dd/MM/yyyy');
+      return {
+        originalStart: origStart,
+        originalEnd: origEnd,
+        simulatedStart: simStart,
+        simulatedEnd: simEnd,
+      };
+    }
+
+    const orig = getProjectGroupOriginalDates(selectedSimProject, selectedSimScope, workCenters);
+    const sim = getProjectGroupOriginalDates(effectiveSimProject, selectedSimScope, workCenters);
     return {
-      start: format(parseISO(shifted.startDate), 'dd/MM/yyyy'),
-      end: format(parseISO(shifted.endDate), 'dd/MM/yyyy'),
+      originalStart: format(parseISO(orig.startDate), 'dd/MM/yyyy'),
+      originalEnd: format(parseISO(orig.endDate), 'dd/MM/yyyy'),
+      simulatedStart: format(parseISO(sim.startDate), 'dd/MM/yyyy'),
+      simulatedEnd: format(parseISO(sim.endDate), 'dd/MM/yyyy'),
     };
-  }, [selectedSimProject, projectShiftDays]);
+  }, [selectedSimProject, effectiveSimProject, selectedSimScope, workCenters]);
 
   return (
     <div className="space-y-6">
@@ -712,6 +1082,17 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
               <CheckCircle className="w-3.5 h-3.5" />
               <span>Capacidade OK</span>
             </button>
+
+            {onOpenPrintReportModal && (
+              <button
+                onClick={onOpenPrintReportModal}
+                className="px-2.5 py-1 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors flex items-center gap-1 border border-indigo-200 cursor-pointer ml-1"
+                title="Imprimir Relatório Técnico / Operacional"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimir</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -781,6 +1162,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 onClick={() => {
                   if (viewMode === 'GROUP') {
                     setSelectedGroup(s.groupName);
+                    setSelectedSubWcId('ALL');
                   } else {
                     setSelectedSectorFilter(s.groupName);
                     const firstWcInGroup = s.workCenters[0];
@@ -812,38 +1194,165 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
             );
           })}
         </div>
+
+        {/* Quick Filter Bar for Specific Centro de Trabalho (CT) inside the selected group */}
+        <div className="flex items-center space-x-1.5 overflow-x-auto pt-2.5 border-t border-slate-100 scrollbar-thin">
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
+            <Cpu className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Centro de Trabalho (CT):</span>
+          </span>
+
+          {viewMode === 'GROUP' ? (
+            <>
+              {/* Button to view all CTs in group (Consolidado) */}
+              <button
+                onClick={() => setSelectedSubWcId('ALL')}
+                className={`px-3 py-1 text-xs font-black rounded-lg transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                  selectedSubWcId === 'ALL'
+                    ? 'bg-slate-900 text-white shadow-xs ring-2 ring-slate-300'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <span>📊 Todos os CTs ({currentGroupWorkCenters.length})</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                    selectedSubWcId === 'ALL'
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  Consolidado
+                </span>
+              </button>
+
+              {/* Individual CT buttons */}
+              {currentGroupWorkCenters.map((wc) => {
+                const isSelected = selectedSubWcId === wc.id;
+                const wcSummary = currentSummaries.find((s) => s.workCenter.id === wc.id);
+                const isOverloaded = (wcSummary?.maxUtilizationPercentage || 0) > 100;
+
+                return (
+                  <button
+                    key={wc.id}
+                    onClick={() => setSelectedSubWcId(wc.id)}
+                    className={`px-3 py-1 text-xs font-black rounded-lg transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-200'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>{wc.name}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        isSelected
+                          ? 'bg-indigo-700 text-white'
+                          : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {wc.resourcesCount} rec
+                    </span>
+                    {isOverloaded && (
+                      <span
+                        className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"
+                        title={`Gargalo detectado: ${wcSummary?.maxUtilizationPercentage.toFixed(0)}% ocupação`}
+                      ></span>
+                    )}
+                  </button>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              {filteredIndividualSummaries.map((s) => {
+                const isSelected = selectedWcId === s.workCenter.id;
+                const isOverloaded = s.maxUtilizationPercentage > 100;
+
+                return (
+                  <button
+                    key={s.workCenter.id}
+                    onClick={() => setSelectedWcId(s.workCenter.id)}
+                    className={`px-3 py-1 text-xs font-black rounded-lg transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white shadow-xs ring-2 ring-indigo-200'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    <span>{s.workCenter.name}</span>
+                    <span
+                      className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        isSelected
+                          ? 'bg-indigo-700 text-white'
+                          : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {s.workCenter.resourcesCount} rec
+                    </span>
+                    {isOverloaded && (
+                      <span
+                        className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"
+                        title={`Gargalo detectado: ${s.maxUtilizationPercentage.toFixed(0)}% ocupação`}
+                      ></span>
+                    )}
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Main Chart Card (GROUP MODE: Consolidado) */}
+      {/* Main Chart Card (GROUP MODE: Consolidado ou Centro Específico) */}
       {viewMode === 'GROUP' && currentGroupSummary && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 pb-4 gap-3">
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <div className="flex items-center gap-1.5">
-                  <FolderTree className="w-5 h-5 text-indigo-600" />
+                  {isShowingSpecificWcInGroup ? (
+                    <Cpu className="w-5 h-5 text-indigo-600" />
+                  ) : (
+                    <FolderTree className="w-5 h-5 text-indigo-600" />
+                  )}
                   <h2 className="text-lg font-black text-slate-900 uppercase tracking-tight">
-                    {currentGroupSummary.groupName}
+                    {isShowingSpecificWcInGroup && currentSubWcSummary
+                      ? currentSubWcSummary.workCenter.name
+                      : currentGroupSummary.groupName}
                   </h2>
                 </div>
 
-                <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
-                  {selectedGroup === 'ALL' ? 'Visão Fabril Consolidada' : 'Agrupador Consolidado'} ({currentGroupSummary.workCenterCount} centros)
-                </span>
+                {isShowingSpecificWcInGroup && currentSubWcSummary ? (
+                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                    Centro Individual • Agrupador: {getWorkCenterCategory(currentSubWcSummary.workCenter)}
+                  </span>
+                ) : (
+                  <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                    {selectedGroup === 'ALL' ? 'Visão Fabril Consolidada' : 'Agrupador Consolidado'} ({currentGroupSummary.workCenterCount} centros)
+                  </span>
+                )}
 
-                <span
-                  className={`px-2.5 py-0.5 text-xs font-black rounded-full ${
-                    currentGroupSummary.maxUtilizationPercentage > 100
-                      ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                      : currentGroupSummary.maxUtilizationPercentage > 85
-                      ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  }`}
-                >
-                  {currentGroupSummary.maxUtilizationPercentage > 100
-                    ? `Sobrecarga (${currentGroupSummary.maxUtilizationPercentage.toFixed(0)}% Máx)`
-                    : `${currentGroupSummary.maxUtilizationPercentage.toFixed(0)}% Ocupação Máx`}
-                </span>
+                {(() => {
+                  const maxUtil = isShowingSpecificWcInGroup && currentSubWcSummary
+                    ? currentSubWcSummary.maxUtilizationPercentage
+                    : currentGroupSummary.maxUtilizationPercentage;
+                  const isOver = (maxUtil ?? 0) > 100;
+                  const isWarn = (maxUtil ?? 0) > 85;
+
+                  return (
+                    <span
+                      className={`px-2.5 py-0.5 text-xs font-black rounded-full ${
+                        isOver
+                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                          : isWarn
+                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      }`}
+                    >
+                      {isOver
+                        ? `Sobrecarga (${(maxUtil ?? 0).toFixed(0)}% Máx)`
+                        : `${(maxUtil ?? 0).toFixed(0)}% Ocupação Máx`}
+                    </span>
+                  );
+                })()}
 
                 {projectShiftDays !== 0 && (
                   <span className="px-2.5 py-0.5 text-xs font-black rounded-full bg-cyan-100 text-cyan-900 border border-cyan-300 flex items-center gap-1">
@@ -853,47 +1362,100 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 )}
               </div>
 
-              <p className="text-xs text-slate-500 mt-1.5">
-                Demanda Total: <strong className="text-slate-800">{Math.round(currentGroupSummary.totalRequiredHours || 0).toLocaleString()}h</strong> |
-                Capacidade Semanal Consolidada: <strong className="text-slate-800">{Math.round(currentGroupSummary.weeklyCapacity || 0).toLocaleString()}h/sem</strong>
-                {' '}({currentGroupSummary.totalResources} recursos somados em {currentGroupSummary.workCenterCount} postos)
-              </p>
-            </div>
-
-            {/* Resources summary box */}
-            <div className="flex items-center gap-3 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-black text-sm">
-                  {currentGroupSummary.totalResources}
-                </div>
-                <div>
-                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                    Recursos Totais
-                  </span>
-                  <span className="text-xs font-extrabold text-indigo-950">
-                    {currentGroupSummary.workCenterCount} Postos / Centros
-                  </span>
-                </div>
-              </div>
-
-              {selectedGroup !== 'ALL' && (
-                <>
-                  <div className="h-6 w-px bg-indigo-200"></div>
-
-                  <button
-                    onClick={() => toggleGroupExpand(currentGroupSummary.groupName)}
-                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer"
-                  >
-                    <span>{expandedGroups[currentGroupSummary.groupName] ? 'Ocultar Postos' : 'Ver Postos'}</span>
-                    {expandedGroups[currentGroupSummary.groupName] ? (
-                      <ChevronDown className="w-3.5 h-3.5" />
-                    ) : (
-                      <ChevronRight className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </>
+              {isShowingSpecificWcInGroup && currentSubWcSummary ? (
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Demanda Total: <strong className="text-slate-800">{Math.round(currentSubWcSummary.totalRequiredHours || 0).toLocaleString()}h</strong> |
+                  Capacidade Semanal: <strong className="text-slate-800">{Math.round(currentSubWcSummary.weeklyCapacity || 0).toLocaleString()}h/sem</strong>
+                  {' '}({currentSubWcSummary.workCenter.resourcesCount} recurso(s), {currentSubWcSummary.workCenter.dailyHours}h/dia)
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Demanda Total: <strong className="text-slate-800">{Math.round(currentGroupSummary.totalRequiredHours || 0).toLocaleString()}h</strong> |
+                  Capacidade Semanal Consolidada: <strong className="text-slate-800">{Math.round(currentGroupSummary.weeklyCapacity || 0).toLocaleString()}h/sem</strong>
+                  {' '}({currentGroupSummary.totalResources} recursos somados em {currentGroupSummary.workCenterCount} postos)
+                </p>
               )}
             </div>
+
+            {/* Resources summary box / Adjuster */}
+            {isShowingSpecificWcInGroup && currentSubWcSummary ? (
+              <div className="flex items-center gap-3 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 shadow-2xs">
+                    <button
+                      onClick={() => handleResourceCountChange(currentSubWcSummary.workCenter, -1)}
+                      className="w-7 h-7 flex items-center justify-center hover:bg-slate-100 text-slate-600 rounded cursor-pointer font-black text-sm"
+                      title="Reduzir recurso"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="px-2 text-xs font-black text-slate-900 min-w-16 text-center">
+                      {currentSubWcSummary.workCenter.resourcesCount} rec
+                    </span>
+                    <button
+                      onClick={() => handleResourceCountChange(currentSubWcSummary.workCenter, 1)}
+                      className="w-7 h-7 flex items-center justify-center hover:bg-slate-100 text-slate-600 rounded cursor-pointer font-black text-sm"
+                      title="Aumentar recurso"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="text-left">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      Capacidade CT
+                    </span>
+                    <span className="text-xs font-extrabold text-indigo-950 font-mono">
+                      {Math.round(currentSubWcSummary.weeklyCapacity)}h/sem
+                    </span>
+                  </div>
+                </div>
+
+                <div className="h-6 w-px bg-indigo-200"></div>
+
+                <button
+                  onClick={() => setSelectedSubWcId('ALL')}
+                  className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-white hover:bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg cursor-pointer transition-colors shadow-2xs"
+                  title="Voltar para a visão consolidada do agrupador"
+                >
+                  Ver Agrupador
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 bg-indigo-50/60 p-2.5 rounded-xl border border-indigo-100">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-black text-sm">
+                    {currentGroupSummary.totalResources}
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      Recursos Totais
+                    </span>
+                    <span className="text-xs font-extrabold text-indigo-950">
+                      {currentGroupSummary.workCenterCount} Postos / Centros
+                    </span>
+                  </div>
+                </div>
+
+                {selectedGroup !== 'ALL' && (
+                  <>
+                    <div className="h-6 w-px bg-indigo-200"></div>
+
+                    <button
+                      onClick={() => toggleGroupExpand(currentGroupSummary.groupName)}
+                      className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer"
+                    >
+                      <span>{expandedGroups[currentGroupSummary.groupName] ? 'Ocultar Postos' : 'Ver Postos'}</span>
+                      {expandedGroups[currentGroupSummary.groupName] ? (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Recharts Stacked Weekly Demand vs Capacity Line - Dedicated Full-Height View */}
@@ -998,9 +1560,17 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
 
                 {/* Capacity Threshold Reference Line */}
                 <ReferenceLine
-                  y={currentGroupSummary.weeklyCapacity}
+                  y={
+                    isShowingSpecificWcInGroup && currentSubWcSummary
+                      ? currentSubWcSummary.weeklyCapacity
+                      : currentGroupSummary.weeklyCapacity
+                  }
                   label={{
-                    value: `Capacidade Consolidada: ${Math.round(currentGroupSummary.weeklyCapacity || 0).toLocaleString()}h`,
+                    value: `Capacidade ${isShowingSpecificWcInGroup ? 'do CT' : 'Consolidada'}: ${Math.round(
+                      (isShowingSpecificWcInGroup && currentSubWcSummary
+                        ? currentSubWcSummary.weeklyCapacity
+                        : currentGroupSummary.weeklyCapacity) || 0
+                    ).toLocaleString()}h`,
                     fill: '#dc2626',
                     fontSize: 11,
                     fontWeight: 'bold',
@@ -1016,7 +1586,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   const renderList = projectsInCurrentView.length > 0 ? projectsInCurrentView : activeProjects;
                   return renderList.map((proj, idx) => {
                     const isLast = idx === renderList.length - 1;
-                    const isSimulated = proj.id === currentSimProjectId && projectShiftDays !== 0;
+                    const isSimulated = proj.id === currentSimProjectId && hasActiveSimulation;
                     return (
                       <Bar
                         key={proj.id}
@@ -1189,10 +1759,11 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                         </div>
 
                         <button
-                          onClick={() => switchToIndividual(wc.id)}
+                          onClick={() => setSelectedSubWcId(wc.id)}
                           className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer"
+                          title="Exibir gráfico específico deste centro de trabalho"
                         >
-                          <span>Ver Gráfico Individual</span>
+                          <span>Ver no Gráfico</span>
                           <ArrowRight className="w-3 h-3" />
                         </button>
                       </div>
@@ -1223,9 +1794,9 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                       : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                   }`}
                 >
-                  {selectedIndividualSummary.maxUtilizationPercentage > 100
-                    ? `Sobrecarga (${selectedIndividualSummary.maxUtilizationPercentage.toFixed(0)}% Máx)`
-                    : `${selectedIndividualSummary.maxUtilizationPercentage.toFixed(0)}% Ocupação`}
+                  {(selectedIndividualSummary.maxUtilizationPercentage ?? 0) > 100
+                    ? `Sobrecarga (${(selectedIndividualSummary.maxUtilizationPercentage ?? 0).toFixed(0)}% Máx)`
+                    : `${(selectedIndividualSummary.maxUtilizationPercentage ?? 0).toFixed(0)}% Ocupação`}
                 </span>
                 <span className="text-xs font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
                   Agrupador: {getWorkCenterCategory(selectedIndividualSummary.workCenter)}
@@ -1405,7 +1976,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   const renderList = projectsInCurrentView.length > 0 ? projectsInCurrentView : activeProjects;
                   return renderList.map((proj, idx) => {
                     const isLast = idx === renderList.length - 1;
-                    const isSimulated = proj.id === currentSimProjectId && projectShiftDays !== 0;
+                    const isSimulated = proj.id === currentSimProjectId && hasActiveSimulation;
                     return (
                       <Bar
                         key={proj.id}
@@ -1512,7 +2083,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
         </div>
       )}
 
-      {/* --- INTERACTIVE PROJECT TIMELINE SHIFTER & LOAD RELIEF CONTROLLER --- */}
+      {/* --- INTERACTIVE PROJECT & GROUP TIMELINE SHIFTER & LOAD RELIEF CONTROLLER --- */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white rounded-2xl p-5 border border-slate-700 shadow-xl space-y-4">
         {/* Section Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-700/80 pb-3.5">
@@ -1523,28 +2094,31 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-black tracking-wide text-white uppercase">
-                  Simulador de Deslocamento de Projetos & Alívio de Gargalos
+                  Simulador de Deslocamento de Projetos & Grupos
                 </h3>
-                {projectShiftDays !== 0 && (
-                  <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 animate-pulse">
-                    ⚡ Simulação Ativa
+                {hasActiveSimulation && (
+                  <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-wider rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 animate-pulse flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-cyan-300" />
+                    <span>Simulação Ativa</span>
                   </span>
                 )}
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                Selecione um projeto e arraste o cronograma ou use os botões para antecipar/postergar datas e liberar sobrecargas em tempo real no gráfico.
+                Selecione o projeto e escolha deslocar o <strong>projeto inteiro</strong> ou <strong>grupos específicos (Solda, Usinagem, etc.)</strong> para nivelar gargalos em tempo real.
               </p>
             </div>
           </div>
 
           {/* Project Selector */}
           <div className="flex items-center gap-2 shrink-0">
-            <span className="text-xs font-bold text-slate-300">Projeto Selecionado:</span>
+            <span className="text-xs font-bold text-slate-300">Projeto:</span>
             <select
               value={currentSimProjectId}
               onChange={(e) => {
                 setSelectedSimProjectId(e.target.value);
+                setSelectedSimScope('ALL');
                 setProjectShiftDays(0);
+                setGroupShifts({});
               }}
               className="bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-400 cursor-pointer max-w-xs"
             >
@@ -1560,10 +2134,79 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
           </div>
         </div>
 
-        {/* Selected Project Details & Shift Controls */}
+        {/* Scope Selector: Entire Project OR Specific Group within the Project */}
+        {selectedSimProject && (
+          <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                <span>O que você deseja deslocar neste projeto?</span>
+              </span>
+              {hasActiveSimulation && (
+                <button
+                  onClick={handleResetAllShifts}
+                  className="text-[11px] font-bold text-slate-400 hover:text-white flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Limpar Todos os Deslocamentos</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {/* Option 1: Entire Project */}
+              <button
+                type="button"
+                onClick={() => setSelectedSimScope('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer border ${
+                  selectedSimScope === 'ALL'
+                    ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-900/40 ring-2 ring-indigo-400/40'
+                    : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Projeto Inteiro (Todas as Etapas)</span>
+                {projectShiftDays !== 0 && (
+                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-cyan-400 text-slate-950">
+                    {projectShiftDays > 0 ? `+${projectShiftDays}d` : `${projectShiftDays}d`}
+                  </span>
+                )}
+              </button>
+
+              {/* Options for each group in this project */}
+              {selectedProjectGroups.map((grp) => {
+                const isSelected = selectedSimScope === grp.groupName;
+                const shiftForGrp = groupShifts[grp.groupName] || 0;
+                return (
+                  <button
+                    key={grp.groupName}
+                    type="button"
+                    onClick={() => setSelectedSimScope(grp.groupName)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white border-indigo-400 shadow-md shadow-indigo-900/40 ring-2 ring-indigo-400/40'
+                        : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    <Flame className={`w-3.5 h-3.5 ${isSelected ? 'text-amber-300' : 'text-amber-400/70'}`} />
+                    <span>{grp.groupName}</span>
+                    <span className="text-[10px] opacity-75 font-mono">({Math.round(grp.hours)}h)</span>
+                    {shiftForGrp !== 0 && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-cyan-400 text-slate-950">
+                        {shiftForGrp > 0 ? `+${shiftForGrp}d` : `${shiftForGrp}d`}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Selected Target Details & Shift Slider Controls */}
         {selectedSimProject && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-            {/* Project Info Badge */}
+            {/* Target Info & Date Badge */}
             <div className="lg:col-span-4 bg-slate-800/80 p-3.5 rounded-xl border border-slate-700 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 min-w-0">
@@ -1571,25 +2214,44 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     className="w-3.5 h-3.5 rounded-full shrink-0 ring-2 ring-white/20"
                     style={{ backgroundColor: selectedSimProject.color || '#6366f1' }}
                   ></div>
-                  <span className="text-xs font-black text-white truncate">
-                    {selectedSimProject.name}
-                  </span>
+                  <div className="truncate">
+                    <span className="text-xs font-black text-white block truncate">
+                      {selectedSimScope === 'ALL' ? selectedSimProject.name : `Grupo: ${selectedSimScope}`}
+                    </span>
+                    {selectedSimScope !== 'ALL' && (
+                      <span className="text-[10px] text-slate-400 block truncate">
+                        em {selectedSimProject.name}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <span className="text-[10px] font-mono font-bold bg-slate-700 px-2 py-0.5 rounded text-slate-300">
-                  {projectShiftDays === 0 ? 'Data Original' : `${projectShiftDays > 0 ? '+' : ''}${projectShiftDays} dias`}
+                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                  currentSimShiftValue !== 0
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-400/40'
+                    : 'bg-slate-700 text-slate-300'
+                }`}>
+                  {currentSimShiftValue === 0 ? 'Data Original' : `${currentSimShiftValue > 0 ? '+' : ''}${currentSimShiftValue} dias`}
                 </span>
               </div>
 
-              <div className="flex items-center justify-between text-xs text-slate-300 bg-slate-900/60 p-2 rounded-lg border border-slate-700/60 font-mono">
-                <div className="flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>{simulatedProjectDates.start}</span>
+              <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/60 font-mono space-y-1">
+                <div className="flex items-center justify-between text-xs text-slate-200">
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{simulatedTargetDates.simulatedStart}</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-slate-500" />
+                  <div className="flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{simulatedTargetDates.simulatedEnd}</span>
+                  </div>
                 </div>
-                <ArrowRight className="w-3 h-3 text-slate-500" />
-                <div className="flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>{simulatedProjectDates.end}</span>
-                </div>
+                {currentSimShiftValue !== 0 && (
+                  <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-800 flex justify-between">
+                    <span>Original:</span>
+                    <span>{simulatedTargetDates.originalStart} ➔ {simulatedTargetDates.originalEnd}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1600,12 +2262,22 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold text-slate-300 flex items-center gap-1">
                     <MoveHorizontal className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>Arraste para Deslocar no Tempo:</span>
+                    <span>
+                      {selectedSimScope === 'ALL'
+                        ? 'Deslocar Projeto Inteiro no Tempo:'
+                        : `Deslocar Grupo ${selectedSimScope} no Tempo:`}
+                    </span>
                   </span>
                   <span className={`font-mono font-black text-xs px-2 py-0.5 rounded ${
-                    projectShiftDays > 0 ? 'bg-cyan-900/60 text-cyan-300 border border-cyan-500/40' : projectShiftDays < 0 ? 'bg-amber-900/60 text-amber-300 border border-amber-500/40' : 'bg-slate-700 text-slate-300'
+                    currentSimShiftValue > 0
+                      ? 'bg-cyan-900/60 text-cyan-300 border border-cyan-500/40'
+                      : currentSimShiftValue < 0
+                      ? 'bg-amber-900/60 text-amber-300 border border-amber-500/40'
+                      : 'bg-slate-700 text-slate-300'
                   }`}>
-                    {projectShiftDays === 0 ? '0 dias (Original)' : `${projectShiftDays > 0 ? `+${projectShiftDays}` : projectShiftDays} dias (${(projectShiftDays / 7).toFixed(1)} sem)`}
+                    {currentSimShiftValue === 0
+                      ? '0 dias (Original)'
+                      : `${currentSimShiftValue > 0 ? `+${currentSimShiftValue}` : currentSimShiftValue} dias (${(currentSimShiftValue / 7).toFixed(1)} sem)`}
                   </span>
                 </div>
 
@@ -1615,8 +2287,8 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     min={-28}
                     max={28}
                     step={1}
-                    value={projectShiftDays}
-                    onChange={(e) => setProjectShiftDays(parseInt(e.target.value, 10))}
+                    value={currentSimShiftValue}
+                    onChange={(e) => handleSetCurrentShift(parseInt(e.target.value, 10))}
                     className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-400 hover:accent-cyan-300 transition-all"
                   />
                   <div className="flex justify-between text-[10px] font-mono text-slate-400 px-1 pt-1">
@@ -1638,7 +2310,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     Ajuste Rápido:
                   </span>
                   <button
-                    onClick={() => setProjectShiftDays((prev) => prev - 14)}
+                    onClick={() => handleStepCurrentShift(-14)}
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 transition-colors cursor-pointer flex items-center gap-1"
                     title="Antecipar 2 semanas (-14 dias)"
                   >
@@ -1646,7 +2318,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     <span>-2 sem</span>
                   </button>
                   <button
-                    onClick={() => setProjectShiftDays((prev) => prev - 7)}
+                    onClick={() => handleStepCurrentShift(-7)}
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 transition-colors cursor-pointer flex items-center gap-1"
                     title="Antecipar 1 semana (-7 dias)"
                   >
@@ -1654,33 +2326,33 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     <span>-1 sem</span>
                   </button>
                   <button
-                    onClick={() => setProjectShiftDays((prev) => prev - 1)}
+                    onClick={() => handleStepCurrentShift(-1)}
                     className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 transition-colors cursor-pointer"
                     title="Antecipar 1 dia"
                   >
                     -1d
                   </button>
                   <button
-                    onClick={handleResetShift}
+                    onClick={handleResetCurrentShift}
                     className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-colors cursor-pointer flex items-center gap-1 ${
-                      projectShiftDays === 0
+                      currentSimShiftValue === 0
                         ? 'bg-slate-700 text-slate-400 border-slate-600 cursor-default'
                         : 'bg-indigo-600/60 hover:bg-indigo-600 text-white border-indigo-500'
                     }`}
-                    title="Restaurar posição original do projeto"
+                    title="Restaurar posição original do item selecionado"
                   >
                     <RotateCcw className="w-3 h-3" />
                     <span>Original (0)</span>
                   </button>
                   <button
-                    onClick={() => setProjectShiftDays((prev) => prev + 1)}
+                    onClick={() => handleStepCurrentShift(1)}
                     className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 transition-colors cursor-pointer"
                     title="Postergar 1 dia"
                   >
                     +1d
                   </button>
                   <button
-                    onClick={() => setProjectShiftDays((prev) => prev + 7)}
+                    onClick={() => handleStepCurrentShift(7)}
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 transition-colors cursor-pointer flex items-center gap-1"
                     title="Postergar 1 semana (+7 dias)"
                   >
@@ -1688,7 +2360,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                     <ArrowRight className="w-3 h-3 text-cyan-400" />
                   </button>
                   <button
-                    onClick={() => setProjectShiftDays((prev) => prev + 14)}
+                    onClick={() => handleStepCurrentShift(14)}
                     className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-lg border border-slate-700 transition-colors cursor-pointer flex items-center gap-1"
                     title="Postergar 2 semanas (+14 dias)"
                   >
@@ -1698,7 +2370,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                 </div>
 
                 {/* Save to Project Button */}
-                {projectShiftDays !== 0 && (
+                {hasActiveSimulation && (
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleApplyShiftToProject}
@@ -1710,6 +2382,29 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                   </div>
                 )}
               </div>
+
+              {/* Active Shifts Summary Badges if multiple are active */}
+              {hasActiveSimulation && (
+                <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px] text-slate-300">
+                  <span className="font-bold text-slate-400">Deslocamentos ativos:</span>
+                  {projectShiftDays !== 0 && (
+                    <span className="px-2 py-0.5 bg-slate-800 rounded-md border border-slate-700 flex items-center gap-1">
+                      <span>Projeto: <strong>{projectShiftDays > 0 ? `+${projectShiftDays}` : projectShiftDays}d</strong></span>
+                      <button onClick={() => setProjectShiftDays(0)} className="text-slate-400 hover:text-white cursor-pointer ml-1">×</button>
+                    </span>
+                  )}
+                  {Object.entries(groupShifts).map(([grp, offVal]) => {
+                    const off = Number(offVal) || 0;
+                    if (off === 0) return null;
+                    return (
+                      <span key={grp} className="px-2 py-0.5 bg-slate-800 rounded-md border border-slate-700 flex items-center gap-1">
+                        <span>{grp}: <strong>{off > 0 ? `+${off}` : off}d</strong></span>
+                        <button onClick={() => setGroupShifts(prev => ({ ...prev, [grp]: 0 }))} className="text-slate-400 hover:text-white cursor-pointer ml-1">×</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1744,10 +2439,10 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
 
             <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={handleResetShift}
+                onClick={handleResetAllShifts}
                 className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-lg border border-slate-700 cursor-pointer"
               >
-                Desfazer
+                Desfazer Tudo
               </button>
               <button
                 onClick={handleApplyShiftToProject}
@@ -1846,7 +2541,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                         ></div>
                       </div>
                       <span className="font-black text-xs">
-                        {allFactorySummary.maxUtilizationPercentage.toFixed(0)}%
+                        {(allFactorySummary.maxUtilizationPercentage ?? 0).toFixed(0)}%
                       </span>
                     </div>
                   </td>
@@ -1962,7 +2657,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                               ></div>
                             </div>
                             <span className="font-black text-xs">
-                              {s.maxUtilizationPercentage.toFixed(0)}%
+                              {(s.maxUtilizationPercentage ?? 0).toFixed(0)}%
                             </span>
                           </div>
                         </td>
@@ -2198,7 +2893,7 @@ export const WorkCenterAnalysis: React.FC<WorkCenterAnalysisProps> = ({
                             ></div>
                           </div>
                           <span className="font-black text-xs">
-                            {s.maxUtilizationPercentage.toFixed(0)}%
+                            {(s.maxUtilizationPercentage ?? 0).toFixed(0)}%
                           </span>
                         </div>
                       </td>

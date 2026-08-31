@@ -84,6 +84,15 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
     };
   }
 
+  // If wrapped in scenario envelope { scenario: { ... } }, unwrap for seamless compatibility
+  if (parsed.scenario && typeof parsed.scenario === 'object' && (parsed.scenario.workCenters || parsed.scenario.projects)) {
+    const scenName = parsed.scenario.name || parsed.summary?.scenarioName;
+    parsed = {
+      ...parsed.scenario,
+      name: scenName,
+    };
+  }
+
   // Case 1: Scenarios Bundle ({ scenarios: [...] })
   if (Array.isArray(parsed.scenarios) && parsed.scenarios.length > 0) {
     const rawScenarios: any[] = parsed.scenarios;

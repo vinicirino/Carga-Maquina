@@ -1,1 +1,125 @@
 @import "tailwindcss";
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 8mm 8mm 8mm;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box !important;
+  }
+
+  html,
+  body {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Reset all flex/height constraints from parent layout */
+  #root,
+  .min-h-screen,
+  .h-screen,
+  main,
+  div {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Hide app navigation chrome, sidebars, headers and toolbars */
+  header,
+  nav,
+  aside,
+  footer,
+  .print-hide,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* Make print modal overlay static and take whole printable space */
+  #print-modal-overlay {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  #print-modal-card {
+    border: none !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0 !important;
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  #printable-report-content {
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 194mm !important;
+    display: block !important;
+    transform: none !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Prevent page breaks inside cards, tables, rows and charts */
+  .break-inside-avoid,
+  .page-break-inside-avoid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  .overflow-x-auto,
+  .overflow-y-auto,
+  .overflow-hidden {
+    overflow: visible !important;
+  }
+
+  table {
+    page-break-inside: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto !important;
+  }
+
+  th, td {
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+}
+

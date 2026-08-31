@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   AlertCircle,
   FolderSync,
+  FileDown,
+  FileUp,
 } from 'lucide-react';
 
 interface ScenarioBarProps {
@@ -22,6 +24,7 @@ interface ScenarioBarProps {
   onDuplicateCurrentScenario: () => void;
   onOpenCompareModal: () => void;
   onOpenManagerModal: () => void;
+  onOpenImportExportModal?: (tab?: 'export' | 'import') => void;
 }
 
 export const ScenarioBar: React.FC<ScenarioBarProps> = ({
@@ -34,6 +37,7 @@ export const ScenarioBar: React.FC<ScenarioBarProps> = ({
   onDuplicateCurrentScenario,
   onOpenCompareModal,
   onOpenManagerModal,
+  onOpenImportExportModal,
 }) => {
   const activeScenario =
     scenarios.find((s) => s.id === activeScenarioId) || scenarios[0];
@@ -120,8 +124,30 @@ export const ScenarioBar: React.FC<ScenarioBarProps> = ({
             title="Comparar indicadores entre todos os cenários salvos"
           >
             <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
-            <span>Comparar Cenários ({scenarios.length})</span>
+            <span>Comparar ({scenarios.length})</span>
           </button>
+
+          {/* Export / Import Scenario */}
+          {onOpenImportExportModal && (
+            <div className="flex items-center gap-1 bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+              <button
+                onClick={() => onOpenImportExportModal('export')}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded-md transition-colors cursor-pointer text-xs font-semibold"
+                title="Exportar Cenário (.json)"
+              >
+                <FileDown className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Exportar</span>
+              </button>
+              <button
+                onClick={() => onOpenImportExportModal('import')}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-slate-300 hover:text-white hover:bg-slate-700 rounded-md transition-colors cursor-pointer text-xs font-semibold"
+                title="Importar Cenário (.json)"
+              >
+                <FileUp className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Importar</span>
+              </button>
+            </div>
+          )}
 
           {/* Manage Scenarios */}
           <button

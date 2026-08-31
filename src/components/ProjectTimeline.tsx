@@ -11,6 +11,8 @@ import {
   buildProjectFromTurbineConfig,
   safeParseDate,
   TurbineCalculationResult,
+  recalculateSectorWorkCenterHours,
+  recalculateSectorDirectHours,
 } from '../utils/turbineCalculator';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import {
@@ -204,62 +206,49 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
 
   const handleSectorConfigChange = (secName: string, updated: SectorCurveConfig) => {
     setConfig((prev) => {
-      const nextCustomCurves = {
-        ...(prev.customSectorCurves || {}),
-        [secName]: updated,
-      };
-
-      let nextWcHours = prev.customWorkCenterHours ? { ...prev.customWorkCenterHours } : undefined;
-      if (nextWcHours && updated.customWorkCenterShares) {
-        const wcsInGroup = workCenters.filter(
-          (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === secName.trim().toUpperCase()
-        );
-        const groupHours = wcsInGroup.reduce(
-          (sum, wc) => sum + (prev.customWorkCenterHours?.[wc.name] ?? prev.customWorkCenterHours?.[wc.id] ?? 0),
-          0
-        );
-        if (groupHours > 0) {
-          wcsInGroup.forEach((wc) => {
-            const share = updated.customWorkCenterShares?.[wc.id] ?? 0;
-            const computedHrs = Math.round(groupHours * (share / 100));
-            nextWcHours![wc.id] = computedHrs;
-            if (nextWcHours![wc.name] !== undefined) {
-              nextWcHours![wc.name] = computedHrs;
-            }
-          });
-        }
-      }
+      const { updatedSectorConfig, updatedWorkCenterHours, newTotalHours } =
+        recalculateSectorWorkCenterHours({
+          sectorName: secName,
+          updatedConfig: updated,
+          currentConfig: prev,
+          workCenters,
+          defaultTurbineType: turbineType,
+        });
 
       return {
         ...prev,
-        customSectorCurves: nextCustomCurves,
-        customWorkCenterHours: nextWcHours,
+        totalHours: newTotalHours,
+        hoursPerTurbine: Math.round(newTotalHours / Math.max(1, prev.quantity || 1)),
+        customSectorCurves: {
+          ...(prev.customSectorCurves || {}),
+          [secName]: updatedSectorConfig,
+        },
+        customWorkCenterHours: updatedWorkCenterHours,
       };
     });
   };
 
   const handleSectorHoursChange = (secName: string, newHours: number) => {
-    const total = config.totalHours > 0 ? config.totalHours : 1;
-    const currentCfg = (config.customSectorCurves || {})[secName];
-    const gain = currentCfg?.volumeGain || 1.0;
-    const newPct = Math.round((newHours * 100) / (total * gain));
+    setConfig((prev) => {
+      const { updatedSectorConfig, updatedWorkCenterHours, newTotalHours } =
+        recalculateSectorDirectHours({
+          sectorName: secName,
+          newHours,
+          currentConfig: prev,
+          workCenters,
+        });
 
-    setConfig((prev) => ({
-      ...prev,
-      customSectorCurves: {
-        ...(prev.customSectorCurves || {}),
-        [secName]: {
-          ...(prev.customSectorCurves?.[secName] || {
-            sectorName: secName,
-            startPct: 10,
-            endPct: 60,
-            curveShape: 's-curve',
-            volumeGain: 1.0,
-          }),
-          percentage: Math.min(100, Math.max(0, newPct)),
+      return {
+        ...prev,
+        totalHours: newTotalHours,
+        hoursPerTurbine: Math.round(newTotalHours / Math.max(1, prev.quantity || 1)),
+        customSectorCurves: {
+          ...(prev.customSectorCurves || {}),
+          [secName]: updatedSectorConfig,
         },
-      },
-    }));
+        customWorkCenterHours: updatedWorkCenterHours,
+      };
+    });
   };
 
   const handleSaveInline = () => {

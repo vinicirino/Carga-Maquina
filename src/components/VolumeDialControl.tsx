@@ -73,11 +73,6 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
         const raw = custom[wc.id] ?? custom[wc.name];
         shares[wc.id] = typeof raw === 'number' ? Math.round(raw) : 0;
       });
-    } else if (calculatedHours === 0 || percentage === 0) {
-      // Sector has 0 hours allocated - all work centers in this sector remain 0%
-      sectorWorkCenters.forEach((wc) => {
-        shares[wc.id] = 0;
-      });
     } else {
       // Default integer equal shares strictly summing to 100%
       const baseShare = Math.floor(100 / n);
@@ -88,7 +83,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     }
 
     return shares;
-  }, [sectorWorkCenters, config.customWorkCenterShares, calculatedHours, percentage]);
+  }, [sectorWorkCenters, config.customWorkCenterShares]);
 
   const totalWcShareSum = useMemo(() => {
     const vals = Object.values(wcShares);
@@ -114,6 +109,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     onUpdateConfig({
       ...config,
       percentage: Math.min(100, Math.max(0, newPct)),
+      customWorkCenterShares: config.customWorkCenterShares || wcShares,
     });
   };
 
@@ -123,6 +119,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     onUpdateConfig({
       ...config,
       volumeGain: clamped,
+      customWorkCenterShares: config.customWorkCenterShares || wcShares,
     });
   };
 
@@ -133,6 +130,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     onUpdateConfig({
       ...config,
       percentage: clamped,
+      customWorkCenterShares: config.customWorkCenterShares || wcShares,
     });
   };
 

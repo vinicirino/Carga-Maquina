@@ -191,7 +191,7 @@ export const ScenarioComparisonModal: React.FC<ScenarioComparisonModalProps> = (
                                 {wc.workCenter.name}
                               </span>
                               <span className="font-extrabold text-rose-600 shrink-0">
-                                {wc.maxUtilizationPercentage.toFixed(0)}%
+                                {(wc.maxUtilizationPercentage ?? 0).toFixed(0)}%
                               </span>
                             </div>
                           ))}

@@ -9,6 +9,7 @@ import {
   SlidersHorizontal,
   Sliders,
   CalendarRange,
+  Printer,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -19,6 +20,7 @@ interface HeaderProps {
   onOpenTurbineTypesModal?: () => void;
   onOpenNewProjectModal: () => void;
   onOpenTurbineProjectModal: () => void;
+  onOpenPrintReportModal?: () => void;
   onResetData: () => void;
   overloadCount: number;
 }
@@ -31,6 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenTurbineTypesModal,
   onOpenNewProjectModal,
   onOpenTurbineProjectModal,
+  onOpenPrintReportModal,
   onResetData,
   overloadCount,
 }) => {
@@ -58,6 +61,17 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Action buttons */}
           <div className="flex items-center space-x-2">
+            {onOpenPrintReportModal && (
+              <button
+                onClick={onOpenPrintReportModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white rounded-lg transition-all border border-indigo-500/30 cursor-pointer shadow-xs"
+                title="Gerar e Imprimir Relatório Executivo (PDF / A4)"
+              >
+                <Printer className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Imprimir Relatório</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenJsonModal}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700 cursor-pointer"

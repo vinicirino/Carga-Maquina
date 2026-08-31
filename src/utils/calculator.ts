@@ -123,7 +123,7 @@ export function generateWeeklySchedule(
     wcDailyCapMap.set(wc.id, calculateDailyCapacity(wc));
   }
 
-  // 1. Find min start date and max end date among active projects
+  // 1. Find min start date and max end date among active projects (including groupDates & workCenterDates)
   let minStartMs = Number.MAX_SAFE_INTEGER;
   let maxEndMs = Number.MIN_SAFE_INTEGER;
   let globalStart = parseISO(activeProjects[0].startDate);
@@ -131,10 +131,55 @@ export function generateWeeklySchedule(
 
   // Pre-parse project dates
   const parsedProjects = activeProjects.map((p) => {
-    const pStart = parseISO(p.startDate);
-    const pEnd = parseISO(p.endDate);
-    const pStartMs = pStart.getTime();
-    const pEndMs = pEnd.getTime();
+    let pStart = parseISO(p.startDate);
+    let pEnd = parseISO(p.endDate);
+    let pStartMs = pStart.getTime();
+    let pEndMs = pEnd.getTime();
+
+    // Account for any customized groupDates or workCenterDates expanding the schedule window
+    if (p.groupDates) {
+      for (const val of Object.values(p.groupDates)) {
+        if (!val) continue;
+        if (val.startDate) {
+          const s = parseISO(val.startDate);
+          const sMs = s.getTime();
+          if (!isNaN(sMs) && sMs < pStartMs) {
+            pStartMs = sMs;
+            pStart = s;
+          }
+        }
+        if (val.endDate) {
+          const e = parseISO(val.endDate);
+          const eMs = e.getTime();
+          if (!isNaN(eMs) && eMs > pEndMs) {
+            pEndMs = eMs;
+            pEnd = e;
+          }
+        }
+      }
+    }
+
+    if (p.workCenterDates) {
+      for (const val of Object.values(p.workCenterDates)) {
+        if (!val) continue;
+        if (val.startDate) {
+          const s = parseISO(val.startDate);
+          const sMs = s.getTime();
+          if (!isNaN(sMs) && sMs < pStartMs) {
+            pStartMs = sMs;
+            pStart = s;
+          }
+        }
+        if (val.endDate) {
+          const e = parseISO(val.endDate);
+          const eMs = e.getTime();
+          if (!isNaN(eMs) && eMs > pEndMs) {
+            pEndMs = eMs;
+            pEnd = e;
+          }
+        }
+      }
+    }
 
     if (pStartMs < minStartMs) {
       minStartMs = pStartMs;
@@ -248,11 +293,15 @@ export function generateWeeklySchedule(
 
       if (customDates?.startDate) {
         const parsed = parseISO(customDates.startDate).getTime();
-        wcStartMs = Math.max(pStartMs, Math.min(pEndMs, parsed));
+        if (!isNaN(parsed)) {
+          wcStartMs = parsed;
+        }
       }
       if (customDates?.endDate) {
         const parsed = parseISO(customDates.endDate).getTime();
-        wcEndMs = Math.min(pEndMs, Math.max(pStartMs, parsed));
+        if (!isNaN(parsed)) {
+          wcEndMs = parsed;
+        }
       }
 
       if (wcStartMs > wcEndMs) {

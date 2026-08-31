@@ -13,7 +13,12 @@ import {
   Layers,
   Factory,
   AlertTriangle,
+  Download,
+  Upload,
+  FileDown,
+  FileUp,
 } from 'lucide-react';
+import { downloadScenarioFile, downloadAllScenariosFile } from '../utils/scenarioImportExportHelper';
 
 interface ScenarioManagerModalProps {
   isOpen: boolean;
@@ -27,6 +32,7 @@ interface ScenarioManagerModalProps {
   onDeleteScenario: (id: string) => void;
   onSaveCurrentAsPrimaryBaseline?: () => void;
   onOpenNewScenarioModal?: () => void;
+  onOpenImportExportModal?: (tab?: 'export' | 'import') => void;
 }
 
 export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
@@ -41,6 +47,7 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
   onDeleteScenario,
   onSaveCurrentAsPrimaryBaseline,
   onOpenNewScenarioModal,
+  onOpenImportExportModal,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -82,18 +89,34 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
             <p className="text-xs text-slate-600 font-medium">
               Alterne entre diferentes versões de capacidade e prazos para simular impactos no PCP, testar contratações ou planejar carteiras do zero.
             </p>
-            {onOpenNewScenarioModal && (
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenNewScenarioModal();
-                }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 shadow-xs"
-              >
-                <GitBranch className="w-3.5 h-3.5" />
-                <span>+ Criar Novo Cenário</span>
-              </button>
-            )}
+            <div className="flex items-center gap-2 shrink-0">
+              {onOpenImportExportModal && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenImportExportModal('import');
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors cursor-pointer border border-slate-300"
+                  title="Importar cenário a partir de arquivo .json"
+                >
+                  <FileUp className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Importar .json</span>
+                </button>
+              )}
+
+              {onOpenNewScenarioModal && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenNewScenarioModal();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 shadow-xs"
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  <span>+ Criar Novo Cenário</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -245,6 +268,14 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
                         )}
 
                         <button
+                          onClick={() => downloadScenarioFile(scen)}
+                          className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                          title="Exportar este Cenário (.json)"
+                        >
+                          <FileDown className="w-4 h-4 text-indigo-600" />
+                        </button>
+
+                        <button
                           onClick={() => startEdit(scen)}
                           className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                           title="Editar Nome e Descrição"
@@ -290,24 +321,47 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
-          <div>
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             {onSaveCurrentAsPrimaryBaseline && (
               <button
                 onClick={() => {
                   onSaveCurrentAsPrimaryBaseline();
                 }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
                 title="Salva os dados do cenário ativo como a Base Primária Oficial (Baseline) do PCP"
               >
-                <Star className="w-4 h-4 fill-white text-white" />
-                <span>Salvar Atual como Base Primária Oficial</span>
+                <Star className="w-3.5 h-3.5 fill-white text-white" />
+                <span>Salvar como Base Oficial</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => downloadAllScenariosFile(scenarios, activeScenarioId)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg transition-colors cursor-pointer"
+              title="Baixar pacote completo com todos os cenários em um único arquivo .json"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Exportar Todos ({scenarios.length})</span>
+            </button>
+
+            {onOpenImportExportModal && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenImportExportModal('export');
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg transition-colors cursor-pointer border border-indigo-200"
+              >
+                <FileDown className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Importar / Exportar...</span>
               </button>
             )}
           </div>
+
           <button
             onClick={onClose}
-            className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg cursor-pointer"
+            className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-lg cursor-pointer shrink-0"
           >
             Fechar
           </button>

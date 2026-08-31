@@ -21,6 +21,9 @@ import { NewScenarioModal } from './components/NewScenarioModal';
 import { ScenarioManagerModal } from './components/ScenarioManagerModal';
 import { ScenarioComparisonModal } from './components/ScenarioComparisonModal';
 import { DatabaseResetModal } from './components/DatabaseResetModal';
+import { PrintReportModal } from './components/PrintReportModal';
+import { ScenarioBar } from './components/ScenarioBar';
+import { ScenarioImportExportModal, ScenarioImportPayload } from './components/ScenarioImportExportModal';
 import { TurbineType } from './types/turbine';
 import { DEFAULT_TURBINE_TYPES } from './data/defaultTurbines';
 import {
@@ -141,7 +144,15 @@ export default function App() {
   const [isNewScenarioModalOpen, setIsNewScenarioModalOpen] = useState(false);
   const [isScenarioManagerModalOpen, setIsScenarioManagerModalOpen] = useState(false);
   const [isScenarioCompareModalOpen, setIsScenarioCompareModalOpen] = useState(false);
+  const [isScenarioImportExportModalOpen, setIsScenarioImportExportModalOpen] = useState(false);
+  const [scenarioImportExportTab, setScenarioImportExportTab] = useState<'export' | 'import'>('export');
   const [isDbResetModalOpen, setIsDbResetModalOpen] = useState(false);
+  const [isPrintReportModalOpen, setIsPrintReportModalOpen] = useState(false);
+
+  const handleOpenScenarioImportExportModal = (tab: 'export' | 'import' = 'export') => {
+    setScenarioImportExportTab(tab);
+    setIsScenarioImportExportModalOpen(true);
+  };
 
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' } | null>(null);
 
@@ -744,6 +755,82 @@ export default function App() {
     setActiveTab('projects');
   };
 
+  const handleScenarioImport = (payload: ScenarioImportPayload) => {
+    const { mode, scenario, scenarios: importedScenarios, activeScenarioId: newActiveId, customScenarioName } = payload;
+
+    if (mode === 'replace_all_scenarios' && importedScenarios && importedScenarios.length > 0) {
+      setScenarios(importedScenarios);
+      const targetId = newActiveId || importedScenarios[0]?.id;
+      setActiveScenarioId(targetId);
+      const activeTarget = importedScenarios.find((s) => s.id === targetId) || importedScenarios[0];
+      setWorkCenters(activeTarget.workCenters);
+      setProjects(activeTarget.projects);
+      setSectorGroups(activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS);
+      showToast(`📦 Pacote com ${importedScenarios.length} cenários restaurado com sucesso!`);
+      return;
+    }
+
+    if (mode === 'append_scenarios' && importedScenarios && importedScenarios.length > 0) {
+      setScenarios((prev) => [...prev, ...importedScenarios]);
+      const targetId = newActiveId || importedScenarios[0]?.id;
+      setActiveScenarioId(targetId);
+      const activeTarget = importedScenarios.find((s) => s.id === targetId) || importedScenarios[0];
+      setWorkCenters(activeTarget.workCenters);
+      setProjects(activeTarget.projects);
+      setSectorGroups(activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS);
+      showToast(`✨ ${importedScenarios.length} cenários adicionados à biblioteca!`);
+      return;
+    }
+
+    if (scenario) {
+      const scenarioName = customScenarioName || scenario.name || 'Cenário Importado';
+      const scenarioGroups = scenario.sectorGroups && scenario.sectorGroups.length > 0
+        ? scenario.sectorGroups
+        : sectorGroups;
+
+      if (mode === 'create_new_scenario') {
+        const newScen: PlanningScenario = {
+          ...scenario,
+          id: `scen-${Date.now()}`,
+          name: scenarioName,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          isBaseline: false,
+          sectorGroups: scenarioGroups,
+        };
+
+        setScenarios((prev) => [...prev, newScen]);
+        setActiveScenarioId(newScen.id);
+        setWorkCenters(newScen.workCenters);
+        setProjects(newScen.projects);
+        setSectorGroups(scenarioGroups);
+        showToast(`✅ Novo Cenário "${scenarioName}" importado e ativado com sucesso!`);
+        return;
+      }
+
+      if (mode === 'replace_current') {
+        setWorkCenters(scenario.workCenters);
+        setProjects(scenario.projects);
+        setSectorGroups(scenarioGroups);
+        setScenarios((prev) =>
+          prev.map((s) =>
+            s.id === activeScenarioId
+              ? {
+                  ...s,
+                  name: customScenarioName || s.name,
+                  workCenters: scenario.workCenters,
+                  projects: scenario.projects,
+                  sectorGroups: scenarioGroups,
+                  updatedAt: new Date().toISOString(),
+                }
+              : s
+          )
+        );
+        showToast(`✅ Cenário ativo atualizado exatamente com os dados do arquivo importado!`);
+      }
+    }
+  };
+
   const handleResetData = () => {
     setIsDbResetModalOpen(true);
   };
@@ -888,6 +975,7 @@ export default function App() {
         onOpenTurbineTypesModal={() => setIsTurbineTypesModalOpen(true)}
         onOpenNewProjectModal={() => setIsNewProjectModalOpen(true)}
         onOpenTurbineProjectModal={() => setIsTurbineProjectModalOpen(true)}
+        onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
         onResetData={handleResetData}
         onSaveAsBaseline={handleSaveAsPrimaryBaseline}
         overloadCount={kpis.overloadedWorkCentersCount}
@@ -900,10 +988,25 @@ export default function App() {
         onDuplicateCurrentScenario={() => handleDuplicateScenario(activeScenarioId)}
         onOpenCompareModal={() => setIsScenarioCompareModalOpen(true)}
         onOpenManagerModal={() => setIsScenarioManagerModalOpen(true)}
+        onOpenScenarioImportExportModal={handleOpenScenarioImportExportModal}
       />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+        {/* Top Scenario Bar */}
+        <ScenarioBar
+          scenarios={scenarios}
+          activeScenarioId={activeScenarioId}
+          isModified={isScenarioModified}
+          onSelectScenario={handleSelectScenario}
+          onSaveCurrentScenario={handleSaveCurrentScenario}
+          onOpenNewScenarioModal={() => setIsNewScenarioModalOpen(true)}
+          onDuplicateCurrentScenario={() => handleDuplicateScenario(activeScenarioId)}
+          onOpenCompareModal={() => setIsScenarioCompareModalOpen(true)}
+          onOpenManagerModal={() => setIsScenarioManagerModalOpen(true)}
+          onOpenImportExportModal={handleOpenScenarioImportExportModal}
+        />
+
         {/* Main Container */}
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
         {/* Overview Tab (Visão Geral & KPIs: Macro / Executiva / Global) */}
@@ -916,6 +1019,7 @@ export default function App() {
             projects={projects}
             sectorGroups={sectorGroups}
             recommendations={recommendations}
+            onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
             onNavigateToWorkCenters={handleNavigateToWorkCenters}
             onNavigateToProjects={() => setActiveTab('projects')}
             onNavigateToSimulation={() => setActiveTab('simulation')}
@@ -935,6 +1039,7 @@ export default function App() {
             initialWcId={targetWcId}
             onUpdateWorkCenter={handleUpdateWorkCenter}
             onUpdateProject={handleUpdateProject}
+            onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
             onSelectWorkCenterForSimulation={() => setActiveTab('simulation')}
           />
         )}
@@ -1067,6 +1172,7 @@ export default function App() {
         onDeleteScenario={handleDeleteScenario}
         onSaveCurrentAsPrimaryBaseline={handleSaveAsPrimaryBaseline}
         onOpenNewScenarioModal={() => setIsNewScenarioModalOpen(true)}
+        onOpenImportExportModal={handleOpenScenarioImportExportModal}
       />
 
       <ScenarioComparisonModal
@@ -1075,6 +1181,18 @@ export default function App() {
         scenarios={scenarios}
         activeScenarioId={activeScenarioId}
         onSelectScenario={handleSelectScenario}
+      />
+
+      <ScenarioImportExportModal
+        isOpen={isScenarioImportExportModalOpen}
+        onClose={() => setIsScenarioImportExportModalOpen(false)}
+        scenarios={scenarios}
+        activeScenarioId={activeScenarioId}
+        currentWorkCenters={workCenters}
+        currentProjects={projects}
+        currentSectorGroups={sectorGroups}
+        onImportScenario={handleScenarioImport}
+        initialTab={scenarioImportExportTab}
       />
 
       <DatabaseResetModal
@@ -1087,6 +1205,19 @@ export default function App() {
         hasOfficialBaseline={hasOfficialBaseline}
         currentProjectsCount={projects.length}
         currentWorkCentersCount={workCenters.length}
+      />
+
+      <PrintReportModal
+        isOpen={isPrintReportModalOpen}
+        onClose={() => setIsPrintReportModalOpen(false)}
+        kpis={kpis}
+        workCenters={workCenters}
+        summaries={workCenterSummaries}
+        weeklyBuckets={weeklyBuckets}
+        projects={projects}
+        activeScenario={activeScenario}
+        sectorGroups={sectorGroups}
+        recommendations={recommendations}
       />
 
       {/* Floating Global Toast Notification */}

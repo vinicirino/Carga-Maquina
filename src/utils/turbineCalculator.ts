@@ -479,3 +479,269 @@ export function buildProjectFromTurbineConfig(
     turbineConfig: config,
   };
 }
+
+export interface RecalculateSectorParams {
+  sectorName: string;
+  updatedConfig: SectorCurveConfig;
+  currentConfig: TurbineProjectConfig;
+  workCenters: WorkCenter[];
+  defaultTurbineType?: TurbineType;
+}
+
+/**
+ * Recalculates sector hours and work center allocations dynamically when
+ * base weight (% Peso Base), workload volume (Volume de Carga), or work center shares change.
+ * Specifically solves the issue where sectors starting with 0h would not update.
+ */
+export function recalculateSectorWorkCenterHours({
+  sectorName,
+  updatedConfig,
+  currentConfig,
+  workCenters,
+  defaultTurbineType,
+}: RecalculateSectorParams): {
+  updatedSectorConfig: SectorCurveConfig;
+  updatedWorkCenterHours: Record<string, number>;
+  newTotalHours: number;
+} {
+  const normSector = sectorName.trim().toUpperCase();
+  const wcsInSector = workCenters.filter(
+    (wc) => getWorkCenterCategory(wc) === normSector
+  );
+
+  const existingWcHours: Record<string, number> = currentConfig.customWorkCenterHours
+    ? { ...currentConfig.customWorkCenterHours }
+    : {};
+
+  // Reference base hours for the project
+  const sumExistingHours = Object.entries(existingWcHours).reduce((sum, [k, h]) => {
+    const isWcId = workCenters.some((wc) => wc.id === k);
+    if (isWcId) {
+      return sum + (typeof h === 'number' && !isNaN(h) ? h : 0);
+    }
+    return sum;
+  }, 0);
+
+  const projectRefHours = Math.max(
+    1000,
+    currentConfig.totalHours ||
+      sumExistingHours ||
+      (currentConfig.hoursPerTurbine || 10000) * (currentConfig.quantity || 1)
+  );
+
+  let pct = typeof updatedConfig.percentage === 'number' ? Math.max(0, Math.min(100, updatedConfig.percentage)) : 0;
+  let gain = typeof updatedConfig.volumeGain === 'number' ? Math.max(0.1, Math.min(3.0, updatedConfig.volumeGain)) : 1.0;
+
+  // Check previous sector hours in customWorkCenterHours
+  const prevSectorHours = wcsInSector.reduce(
+    (sum, wc) => sum + (existingWcHours[wc.id] ?? existingWcHours[wc.name] ?? 0),
+    0
+  );
+
+  // If sector was previously 0% and 0h, and user moved volumeGain slider, assign template default percentage so calculation responds
+  if (pct === 0 && gain !== 1.0 && prevSectorHours === 0) {
+    const fallbackTemplatePct = defaultTurbineType?.sectorCurves?.[sectorName]?.percentage || 10;
+    pct = fallbackTemplatePct;
+  }
+
+  // Calculate sector target hours based on (projectRefHours * percentage * volumeGain / 100)
+  const targetSectorHours = Math.max(0, Math.round((projectRefHours * (pct * gain)) / 100));
+
+  // Determine work center shares
+  const shares: Record<string, number> = { ...(updatedConfig.customWorkCenterShares || {}) };
+  let sumShares = 0;
+  if (wcsInSector.length > 0) {
+    wcsInSector.forEach((wc) => {
+      const s = shares[wc.id] ?? shares[wc.name];
+      if (typeof s === 'number' && !isNaN(s) && s > 0) {
+        sumShares += s;
+      }
+    });
+  }
+
+  const updatedShares: Record<string, number> = {};
+
+  if (wcsInSector.length > 0) {
+    if (sumShares > 0 && targetSectorHours > 0) {
+      // Normalize existing non-zero proportional shares
+      wcsInSector.forEach((wc) => {
+        const rawShare = shares[wc.id] ?? shares[wc.name] ?? 0;
+        const normShare = Math.round((rawShare / sumShares) * 100);
+        updatedShares[wc.id] = normShare;
+      });
+    } else if (targetSectorHours > 0) {
+      // Distribute equally among sector work centers (e.g. 50%/50% or 100%)
+      const n = wcsInSector.length;
+      const baseShare = Math.floor(100 / n);
+      const rem = 100 % n;
+      wcsInSector.forEach((wc, i) => {
+        updatedShares[wc.id] = baseShare + (i < rem ? 1 : 0);
+      });
+    } else {
+      // Zero hours: preserve default equal share configuration
+      const n = wcsInSector.length;
+      const baseShare = Math.floor(100 / n);
+      const rem = 100 % n;
+      wcsInSector.forEach((wc, i) => {
+        updatedShares[wc.id] = baseShare + (i < rem ? 1 : 0);
+      });
+    }
+
+    // Allocate hours to individual work centers
+    let sumAllocated = 0;
+    const totalShareSum = wcsInSector.reduce((sum, wc) => sum + (updatedShares[wc.id] || 0), 0) || 100;
+
+    wcsInSector.forEach((wc, i) => {
+      let wcHours: number;
+      if (i === wcsInSector.length - 1) {
+        wcHours = Math.max(0, targetSectorHours - sumAllocated);
+      } else {
+        const sh = updatedShares[wc.id] || 0;
+        wcHours = Math.round(targetSectorHours * (sh / totalShareSum));
+        sumAllocated += wcHours;
+      }
+
+      existingWcHours[wc.id] = wcHours;
+      existingWcHours[wc.name] = wcHours;
+    });
+  }
+
+  // Calculate new total project hours
+  const newTotalHours = Object.entries(existingWcHours).reduce((sum, [k, h]) => {
+    const isWcId = workCenters.some((wc) => wc.id === k);
+    if (isWcId) {
+      return sum + (typeof h === 'number' && !isNaN(h) ? h : 0);
+    }
+    return sum;
+  }, 0) || targetSectorHours || projectRefHours;
+
+  const finalSectorConfig: SectorCurveConfig = {
+    ...updatedConfig,
+    percentage: pct,
+    volumeGain: gain,
+    customWorkCenterShares: updatedShares,
+  };
+
+  return {
+    updatedSectorConfig: finalSectorConfig,
+    updatedWorkCenterHours: existingWcHours,
+    newTotalHours,
+  };
+}
+
+/**
+ * Recalculates sector configuration and work center hours when hours are edited directly.
+ */
+export function recalculateSectorDirectHours({
+  sectorName,
+  newHours,
+  currentConfig,
+  workCenters,
+}: {
+  sectorName: string;
+  newHours: number;
+  currentConfig: TurbineProjectConfig;
+  workCenters: WorkCenter[];
+}): {
+  updatedSectorConfig: SectorCurveConfig;
+  updatedWorkCenterHours: Record<string, number>;
+  newTotalHours: number;
+} {
+  const normSector = sectorName.trim().toUpperCase();
+  const wcsInSector = workCenters.filter(
+    (wc) => getWorkCenterCategory(wc) === normSector
+  );
+
+  const existingWcHours: Record<string, number> = currentConfig.customWorkCenterHours
+    ? { ...currentConfig.customWorkCenterHours }
+    : {};
+
+  const currentSectorCfg = currentConfig.customSectorCurves?.[sectorName] || {
+    sectorName,
+    percentage: 10,
+    startPct: 10,
+    endPct: 60,
+    curveShape: 's-curve' as const,
+    volumeGain: 1.0,
+  };
+
+  const gain = currentSectorCfg.volumeGain || 1.0;
+  const safeHours = Math.max(0, isNaN(newHours) ? 0 : newHours);
+
+  // Project reference hours
+  const sumExistingHours = Object.entries(existingWcHours).reduce((sum, [k, h]) => {
+    const isWcId = workCenters.some((wc) => wc.id === k);
+    if (isWcId) {
+      return sum + (typeof h === 'number' && !isNaN(h) ? h : 0);
+    }
+    return sum;
+  }, 0);
+
+  const projectRefHours = Math.max(
+    1000,
+    currentConfig.totalHours ||
+      sumExistingHours ||
+      (currentConfig.hoursPerTurbine || 10000) * (currentConfig.quantity || 1)
+  );
+
+  const newPct = projectRefHours > 0 ? Math.round((safeHours * 100) / (projectRefHours * gain)) : 0;
+
+  // Determine shares
+  const shares = { ...(currentSectorCfg.customWorkCenterShares || {}) };
+  let sumShares = 0;
+  wcsInSector.forEach((wc) => {
+    const s = shares[wc.id] ?? shares[wc.name];
+    if (typeof s === 'number' && !isNaN(s) && s > 0) sumShares += s;
+  });
+
+  const updatedShares: Record<string, number> = {};
+  if (wcsInSector.length > 0) {
+    if (sumShares > 0 && safeHours > 0) {
+      wcsInSector.forEach((wc) => {
+        const rawShare = shares[wc.id] ?? shares[wc.name] ?? 0;
+        updatedShares[wc.id] = Math.round((rawShare / sumShares) * 100);
+      });
+    } else {
+      const n = wcsInSector.length;
+      const base = Math.floor(100 / n);
+      const rem = 100 % n;
+      wcsInSector.forEach((wc, i) => {
+        updatedShares[wc.id] = base + (i < rem ? 1 : 0);
+      });
+    }
+
+    let sumAllocated = 0;
+    const totalShareSum = wcsInSector.reduce((sum, wc) => sum + (updatedShares[wc.id] || 0), 0) || 100;
+
+    wcsInSector.forEach((wc, i) => {
+      let wcHours: number;
+      if (i === wcsInSector.length - 1) {
+        wcHours = Math.max(0, safeHours - sumAllocated);
+      } else {
+        const sh = updatedShares[wc.id] || 0;
+        wcHours = Math.round(safeHours * (sh / totalShareSum));
+        sumAllocated += wcHours;
+      }
+      existingWcHours[wc.id] = wcHours;
+      existingWcHours[wc.name] = wcHours;
+    });
+  }
+
+  const newTotalHours = Object.entries(existingWcHours).reduce((sum, [k, h]) => {
+    const isWcId = workCenters.some((wc) => wc.id === k);
+    if (isWcId) return sum + (typeof h === 'number' && !isNaN(h) ? h : 0);
+    return sum;
+  }, 0) || safeHours || projectRefHours;
+
+  const updatedSectorConfig: SectorCurveConfig = {
+    ...currentSectorCfg,
+    percentage: Math.min(100, Math.max(0, newPct)),
+    customWorkCenterShares: updatedShares,
+  };
+
+  return {
+    updatedSectorConfig,
+    updatedWorkCenterHours: existingWcHours,
+    newTotalHours,
+  };
+}

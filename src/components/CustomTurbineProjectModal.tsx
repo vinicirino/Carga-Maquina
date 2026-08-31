@@ -28,6 +28,8 @@ import {
   buildProjectFromTurbineConfig,
   safeParseDate,
   TurbineCalculationResult,
+  recalculateSectorWorkCenterHours,
+  recalculateSectorDirectHours,
 } from '../utils/turbineCalculator';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
 import { getProjectTotalHours } from '../utils/dateValidation';
@@ -130,6 +132,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
   const [customSectorCurves, setCustomSectorCurves] = useState<
     Record<string, SectorCurveConfig>
   >({});
+  const [customWcHours, setCustomWcHours] = useState<Record<string, number> | undefined>(undefined);
 
   // Active Sector Groups strictly from registered work centers
   const allKnownSectorGroups = useMemo(() => {
@@ -176,6 +179,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
 
       const curves: Record<string, SectorCurveConfig> = {};
       const sourceHours = cfg?.customWorkCenterHours || projectToEdit.workCenterHours || {};
+      setCustomWcHours(sourceHours && Object.keys(sourceHours).length > 0 ? { ...sourceHours } : undefined);
 
       allKnownSectorGroups.forEach((secName) => {
         const existingCurve = cfg?.customSectorCurves?.[secName];
@@ -329,32 +333,73 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
 
   // Sector Curve modification handler
   const handleSectorConfigChange = (secName: string, updated: SectorCurveConfig) => {
+    const currentConfig: TurbineProjectConfig = {
+      projectName: projectName || 'PROJETO PERSONALIZADO',
+      turbineTypeId: selectedTypeId,
+      quantity,
+      hoursPerTurbine,
+      totalHours: totalHoursInput,
+      startDate,
+      endDate: endDate < startDate ? startDate : endDate,
+      staggeringMode: 'STAGGERED',
+      staggerOffsetWeeks: 4,
+      customSectorCurves,
+      customWorkCenterHours: customWcHours,
+    };
+
+    const { updatedSectorConfig, updatedWorkCenterHours, newTotalHours } =
+      recalculateSectorWorkCenterHours({
+        sectorName: secName,
+        updatedConfig: updated,
+        currentConfig,
+        workCenters,
+        defaultTurbineType: selectedTurbine,
+      });
+
     setCustomSectorCurves((prev) => ({
       ...prev,
-      [secName]: updated,
+      [secName]: updatedSectorConfig,
     }));
+    setCustomWcHours(updatedWorkCenterHours);
+    setTotalHoursInput(newTotalHours);
+    if (quantity > 0) {
+      setHoursPerTurbine(Math.round(newTotalHours / quantity));
+    }
   };
 
   // Direct edit of hours on a sector
   const handleSectorHoursChange = (secName: string, newHours: number) => {
-    const total = totalHoursInput > 0 ? totalHoursInput : 1;
-    const currentCfg = customSectorCurves[secName];
-    const gain = currentCfg?.volumeGain || 1.0;
-    const newPct = Math.round((newHours * 100) / (total * gain));
+    const currentConfig: TurbineProjectConfig = {
+      projectName: projectName || 'PROJETO PERSONALIZADO',
+      turbineTypeId: selectedTypeId,
+      quantity,
+      hoursPerTurbine,
+      totalHours: totalHoursInput,
+      startDate,
+      endDate: endDate < startDate ? startDate : endDate,
+      staggeringMode: 'STAGGERED',
+      staggerOffsetWeeks: 4,
+      customSectorCurves,
+      customWorkCenterHours: customWcHours,
+    };
+
+    const { updatedSectorConfig, updatedWorkCenterHours, newTotalHours } =
+      recalculateSectorDirectHours({
+        sectorName: secName,
+        newHours,
+        currentConfig,
+        workCenters,
+      });
 
     setCustomSectorCurves((prev) => ({
       ...prev,
-      [secName]: {
-        ...(prev[secName] || {
-          sectorName: secName,
-          startPct: 10,
-          endPct: 60,
-          curveShape: 's-curve',
-          volumeGain: 1.0,
-        }),
-        percentage: Math.min(100, Math.max(0, newPct)),
-      },
+      [secName]: updatedSectorConfig,
     }));
+    setCustomWcHours(updatedWorkCenterHours);
+    setTotalHoursInput(newTotalHours);
+    if (quantity > 0) {
+      setHoursPerTurbine(Math.round(newTotalHours / quantity));
+    }
   };
 
   // Reset sector curves to turbine template defaults
@@ -377,6 +422,10 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
       }
     });
     setCustomSectorCurves(curves);
+    setCustomWcHours(undefined);
+    const baseHours = selectedTurbine.defaultHoursPerTurbine || 10000;
+    setHoursPerTurbine(baseHours);
+    setTotalHoursInput(baseHours * quantity);
   };
 
   // Search & Filter
@@ -397,10 +446,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
       staggeringMode: 'STAGGERED',
       staggerOffsetWeeks: 4,
       customSectorCurves,
-      customWorkCenterHours:
-        projectToEdit?.turbineConfig?.customWorkCenterHours ||
-        projectToEdit?.workCenterHours ||
-        undefined,
+      customWorkCenterHours: customWcHours,
     };
   }, [
     projectName,
@@ -411,7 +457,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
     startDate,
     endDate,
     customSectorCurves,
-    projectToEdit,
+    customWcHours,
   ]);
 
   const calculationResult: TurbineCalculationResult = useMemo(() => {

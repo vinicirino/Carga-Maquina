@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   Flame,
   Zap,
+  Printer,
 } from 'lucide-react';
 import {
   BarChart,
@@ -57,6 +58,7 @@ interface OverviewDashboardProps {
   projects: Project[];
   sectorGroups?: string[];
   recommendations?: any[];
+  onOpenPrintReportModal?: () => void;
   onNavigateToWorkCenters: (sectorGroup?: string, wcId?: string) => void;
   onNavigateToProjects: () => void;
   onNavigateToSimulation: () => void;
@@ -70,6 +72,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   projects,
   sectorGroups = DEFAULT_SECTOR_GROUPS,
   recommendations = [],
+  onOpenPrintReportModal,
   onNavigateToWorkCenters,
   onNavigateToProjects,
   onNavigateToSimulation,
@@ -277,6 +280,17 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               <div className="w-4 h-0.5 bg-rose-600 border-dashed"></div>
               <span className="text-rose-700 font-bold">Capacidade Nominal</span>
             </div>
+
+            {onOpenPrintReportModal && (
+              <button
+                onClick={onOpenPrintReportModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-lg border border-indigo-200 transition-colors cursor-pointer ml-2"
+                title="Gerar e Imprimir Relatório Executivo com Gráficos e Diagnóstico"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Imprimir Relatório</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -457,7 +471,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                           : 'text-emerald-700 font-black'
                       }
                     >
-                      {sector.maxUtilizationPercentage.toFixed(1)}%
+                      {(sector.maxUtilizationPercentage ?? 0).toFixed(1)}%
                     </strong>
                   </div>
                 </div>
@@ -526,7 +540,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right">
                       <div className="text-xs font-black text-rose-600">
-                        {s.maxUtilizationPercentage.toFixed(1)}%
+                        {(s.maxUtilizationPercentage ?? 0).toFixed(1)}%
                       </div>
                       <div className="text-[10px] text-slate-400">
                         {s.overloadedWeeksCount} sem sobrecarga

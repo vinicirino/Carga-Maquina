@@ -27,6 +27,9 @@ import {
   TrendingUp,
   Database,
   Star,
+  Printer,
+  FileDown,
+  FileUp,
 } from 'lucide-react';
 import { PlanningScenario } from '../types';
 
@@ -39,6 +42,7 @@ interface SidebarProps {
   onOpenNewProjectModal: () => void;
   onOpenTurbineProjectModal: () => void;
   onOpenMatrixModal?: () => void;
+  onOpenPrintReportModal?: () => void;
   onResetData: () => void;
   onSaveAsBaseline?: () => void;
   overloadCount: number;
@@ -52,6 +56,7 @@ interface SidebarProps {
   onDuplicateCurrentScenario: () => void;
   onOpenCompareModal: () => void;
   onOpenManagerModal: () => void;
+  onOpenScenarioImportExportModal?: (tab?: 'export' | 'import') => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -63,6 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenNewProjectModal,
   onOpenTurbineProjectModal,
   onOpenMatrixModal,
+  onOpenPrintReportModal,
   onResetData,
   onSaveAsBaseline,
   overloadCount,
@@ -75,6 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDuplicateCurrentScenario,
   onOpenCompareModal,
   onOpenManagerModal,
+  onOpenScenarioImportExportModal,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(false);
   const [isMobileOpen, setIsMobileOpen] = useState<boolean>(false);
@@ -322,6 +329,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <BarChart3 className="w-3.5 h-3.5 text-purple-400" />
                   <span>Comparar Cenários ({scenarios.length})</span>
                 </button>
+
+                {onOpenScenarioImportExportModal && (
+                  <button
+                    onClick={() => onOpenScenarioImportExportModal('export')}
+                    className="col-span-2 flex items-center justify-center gap-1.5 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-semibold text-[11px] rounded-lg transition-colors cursor-pointer"
+                    title="Importar ou Exportar Cenários em arquivo .JSON"
+                  >
+                    <FileDown className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Importar / Exportar Cenário</span>
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -333,6 +351,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <GitBranch className="w-4 h-4" />
               </button>
+              {onOpenScenarioImportExportModal && (
+                <button
+                  onClick={() => onOpenScenarioImportExportModal('export')}
+                  className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                  title="Importar / Exportar Cenários (.json)"
+                >
+                  <FileDown className="w-4 h-4" />
+                </button>
+              )}
               {isScenarioModified && (
                 <button
                   onClick={onSaveCurrentScenario}
@@ -413,6 +440,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <TrendingUp className="w-4 h-4 text-emerald-400 shrink-0" />
                 {!isCollapsed && <span className="truncate">Cadastro de Curva S</span>}
+              </button>
+            )}
+
+            {/* Gerar / Imprimir Relatório */}
+            {onOpenPrintReportModal && (
+              <button
+                onClick={() => {
+                  onOpenPrintReportModal();
+                  setIsMobileOpen(false);
+                }}
+                title={isCollapsed ? 'Gerar / Imprimir Relatório Executivo' : undefined}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-900/60 hover:bg-indigo-800/80 text-white border border-indigo-500/40 transition-colors cursor-pointer shadow-xs ${
+                  isCollapsed ? 'justify-center px-2' : ''
+                }`}
+              >
+                <Printer className="w-4 h-4 text-indigo-300 shrink-0" />
+                {!isCollapsed && <span className="truncate">Imprimir Relatório (PDF)</span>}
               </button>
             )}
 
