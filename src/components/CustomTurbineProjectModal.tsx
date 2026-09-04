@@ -334,6 +334,40 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
 
   // Sector Curve modification handler
   const handleSectorConfigChange = (secName: string, updated: SectorCurveConfig) => {
+    const prevCurve = customSectorCurves[secName];
+    const pctChanged = prevCurve && typeof updated.percentage === 'number' && Math.abs((prevCurve.percentage ?? 0) - updated.percentage) > 0.001;
+    const gainChanged = prevCurve && typeof updated.volumeGain === 'number' && Math.abs((prevCurve.volumeGain ?? 1.0) - updated.volumeGain) > 0.001;
+
+    let sharesChanged = false;
+    if (prevCurve?.customWorkCenterShares && updated.customWorkCenterShares) {
+      const pShares = prevCurve.customWorkCenterShares;
+      const uShares = updated.customWorkCenterShares;
+      const allKeys = new Set([...Object.keys(pShares), ...Object.keys(uShares)]);
+      for (const k of allKeys) {
+        if (Math.abs((pShares[k] ?? 0) - (uShares[k] ?? 0)) > 0.001) {
+          sharesChanged = true;
+          break;
+        }
+      }
+    } else if (!prevCurve?.customWorkCenterShares !== !updated.customWorkCenterShares) {
+      sharesChanged = true;
+    }
+
+    // Fast path: Only timeline dates / curve changed (startPct, endPct, curveShape)
+    // Strictly preserve custom work center hours and total hours!
+    if (!pctChanged && !gainChanged && !sharesChanged && prevCurve) {
+      setCustomSectorCurves((prev) => ({
+        ...prev,
+        [secName]: {
+          ...prevCurve,
+          startPct: updated.startPct,
+          endPct: updated.endPct,
+          curveShape: updated.curveShape,
+        },
+      }));
+      return;
+    }
+
     const currentConfig: TurbineProjectConfig = {
       projectName: projectName || 'PROJETO PERSONALIZADO',
       turbineTypeId: selectedTypeId,
@@ -998,6 +1032,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
                       calculatedHours={secHours}
                       totalProjectHours={totalHoursInput}
                       workCenters={workCenters}
+                      customWorkCenterHours={customWcHours || calculationResult.workCenterHours}
                       onUpdateConfig={(updated) => handleSectorConfigChange(secName, updated)}
                       onUpdateHours={(newHrs) => handleSectorHoursChange(secName, newHrs)}
                     />

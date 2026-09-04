@@ -30,6 +30,7 @@ interface VolumeDialControlProps {
   calculatedHours: number;
   totalProjectHours: number;
   workCenters?: WorkCenter[];
+  customWorkCenterHours?: Record<string, number>;
   onUpdateConfig: (updated: SectorCurveConfig) => void;
   onUpdateHours?: (newHours: number) => void;
 }
@@ -41,6 +42,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
   calculatedHours,
   totalProjectHours,
   workCenters = [],
+  customWorkCenterHours,
   onUpdateConfig,
   onUpdateHours,
 }) => {
@@ -377,7 +379,11 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
             {sectorWorkCenters.map((wc) => {
               const cap = calculateWeeklyCapacity(wc);
               const share = Math.round(wcShares[wc.id] ?? 0);
-              const allocatedHours = Math.round(calculatedHours * (share / 100));
+              const directHours = customWorkCenterHours?.[wc.id] ?? customWorkCenterHours?.[wc.name];
+              const allocatedHours =
+                typeof directHours === 'number' && !hasCustomWcShares
+                  ? directHours
+                  : Math.round(calculatedHours * (share / 100));
 
               return (
                 <div

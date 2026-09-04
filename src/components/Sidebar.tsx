@@ -35,6 +35,8 @@ import {
 import { PlanningScenario } from '../types';
 
 interface SidebarProps {
+  activeModule: 'capacity' | 'gantt';
+  setActiveModule: (module: 'capacity' | 'gantt') => void;
   activeTab: 'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation';
   setActiveTab: (tab: 'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation') => void;
   onOpenJsonModal: () => void;
@@ -63,6 +65,8 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  activeModule,
+  setActiveModule,
   activeTab,
   setActiveTab,
   onOpenJsonModal,
@@ -176,53 +180,107 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Scrollable Navigation Body */}
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800">
-        {/* Navigation Tabs */}
+        {/* Module Switcher */}
         <div>
           {!isCollapsed && (
             <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Navegação Principal
+              Módulo do Sistema
             </div>
           )}
-          <nav className="space-y-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setIsMobileOpen(false);
-                  }}
-                  title={isCollapsed ? item.label : undefined}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-sm font-bold'
-                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/80'
-                  } ${isCollapsed ? 'justify-center px-2' : ''}`}
-                >
-                  <Icon
-                    className={`w-4 h-4 shrink-0 ${
-                      isActive ? 'text-white' : item.color
-                    }`}
-                  />
-                  {!isCollapsed && (
-                    <span className="truncate flex-1 text-left">{item.label}</span>
-                  )}
-                  {!isCollapsed && item.badge && (
-                    <span
-                      className={`text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 ${
-                        item.badgeColor || 'bg-slate-800 text-slate-300'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
+          <div className={`grid ${isCollapsed ? 'grid-cols-1 gap-1.5' : 'grid-cols-2 gap-1'} bg-slate-950 p-1 rounded-xl border border-slate-800`}>
+            <button
+              onClick={() => setActiveModule('capacity')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeModule === 'capacity'
+                  ? 'bg-indigo-600 text-white shadow-sm font-black'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+              }`}
+              title="Módulo 1: Carga Máquina (Capacidade, Simulação de Cenários e Heatmap)"
+            >
+              <Factory className="w-3.5 h-3.5 shrink-0" />
+              {!isCollapsed && <span className="truncate">Carga Máquina</span>}
+            </button>
+            <button
+              onClick={() => setActiveModule('gantt')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeModule === 'gantt'
+                  ? 'bg-indigo-600 text-white shadow-sm font-black'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+              }`}
+              title="Módulo 2: Cronograma Gantt (WBS Multinível 0..N, Materiais e Dashboard de Execução)"
+            >
+              <CalendarRange className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+              {!isCollapsed && <span className="truncate">Gantt EAP</span>}
+            </button>
+          </div>
         </div>
+
+        {/* Navigation Tabs (Only when in Capacity module) */}
+        {activeModule === 'capacity' ? (
+          <div>
+            {!isCollapsed && (
+              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Navegação Carga Máquina
+              </div>
+            )}
+            <nav className="space-y-1">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setIsMobileOpen(false);
+                    }}
+                    title={isCollapsed ? item.label : undefined}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-indigo-600 text-white shadow-sm font-bold'
+                        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/80'
+                    } ${isCollapsed ? 'justify-center px-2' : ''}`}
+                  >
+                    <Icon
+                      className={`w-4 h-4 shrink-0 ${
+                        isActive ? 'text-white' : item.color
+                      }`}
+                    />
+                    {!isCollapsed && (
+                      <span className="truncate flex-1 text-left">{item.label}</span>
+                    )}
+                    {!isCollapsed && item.badge && (
+                      <span
+                        className={`text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 ${
+                          item.badgeColor || 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        ) : (
+          <div>
+            {!isCollapsed && (
+              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                Recursos do Módulo Gantt
+              </div>
+            )}
+            <div className="space-y-1.5 text-xs text-slate-300 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+              <div className="flex items-center gap-2 text-indigo-400 font-bold">
+                <CalendarRange className="w-4 h-4" />
+                <span>WBS & Linha do Tempo</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Níveis hierárquicos 0 a N (Turbina, Conjuntos, Itens e Operações fabris) com zoom em Dias, Semanas, Meses e Anos.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Scenario Management Box */}
         <div className={`bg-slate-950/60 rounded-xl p-3 border border-slate-800/80 ${isCollapsed ? 'px-2 text-center' : ''}`}>

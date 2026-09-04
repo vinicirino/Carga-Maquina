@@ -206,6 +206,42 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
 
   const handleSectorConfigChange = (secName: string, updated: SectorCurveConfig) => {
     setConfig((prev) => {
+      const prevCurve = prev.customSectorCurves?.[secName];
+      const pctChanged = prevCurve && typeof updated.percentage === 'number' && Math.abs((prevCurve.percentage ?? 0) - updated.percentage) > 0.001;
+      const gainChanged = prevCurve && typeof updated.volumeGain === 'number' && Math.abs((prevCurve.volumeGain ?? 1.0) - updated.volumeGain) > 0.001;
+
+      let sharesChanged = false;
+      if (prevCurve?.customWorkCenterShares && updated.customWorkCenterShares) {
+        const pShares = prevCurve.customWorkCenterShares;
+        const uShares = updated.customWorkCenterShares;
+        const allKeys = new Set([...Object.keys(pShares), ...Object.keys(uShares)]);
+        for (const k of allKeys) {
+          if (Math.abs((pShares[k] ?? 0) - (uShares[k] ?? 0)) > 0.001) {
+            sharesChanged = true;
+            break;
+          }
+        }
+      } else if (!prevCurve?.customWorkCenterShares !== !updated.customWorkCenterShares) {
+        sharesChanged = true;
+      }
+
+      // Fast path: If ONLY timeline parameters (startPct, endPct, curveShape) changed:
+      // Strictly PRESERVE all work center hours and project total hours without any changes!
+      if (!pctChanged && !gainChanged && !sharesChanged && prevCurve) {
+        return {
+          ...prev,
+          customSectorCurves: {
+            ...(prev.customSectorCurves || {}),
+            [secName]: {
+              ...prevCurve,
+              startPct: updated.startPct,
+              endPct: updated.endPct,
+              curveShape: updated.curveShape,
+            },
+          },
+        };
+      }
+
       const { updatedSectorConfig, updatedWorkCenterHours, newTotalHours } =
         recalculateSectorWorkCenterHours({
           sectorName: secName,
@@ -571,6 +607,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
                     calculatedHours={secHours}
                     totalProjectHours={config.totalHours}
                     workCenters={workCenters}
+                    customWorkCenterHours={config.customWorkCenterHours || calculationResult.workCenterHours}
                     onUpdateConfig={(updated) => handleSectorConfigChange(secName, updated)}
                     onUpdateHours={(newHrs) => handleSectorHoursChange(secName, newHrs)}
                   />

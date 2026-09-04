@@ -27,6 +27,10 @@ import { CalendarManagerModal } from './components/CalendarManagerModal';
 import { ScenarioImportExportModal, ScenarioImportPayload } from './components/ScenarioImportExportModal';
 import { TurbineType } from './types/turbine';
 import { DEFAULT_TURBINE_TYPES } from './data/defaultTurbines';
+import { GanttTaskNode } from './types/gantt';
+import { INITIAL_GANTT_TASKS } from './data/defaultGanttData';
+import { recalculateHierarchyRollup } from './utils/ganttEngine';
+import { GanttModuleView } from './components/gantt/GanttModuleView';
 import {
   Layers,
   AlertTriangle,
@@ -48,8 +52,12 @@ const STORAGE_KEY_CALENDAR_EXCEPTIONS = 'carga_maquina_calendar_exceptions_v1';
 const STORAGE_KEY_TURBINE_TYPES = 'carga_maquina_turbine_types_v1';
 const STORAGE_KEY_SCENARIOS = 'carga_maquina_scenarios_v1';
 const STORAGE_KEY_ACTIVE_SCENARIO_ID = 'carga_maquina_active_scenario_id_v1';
+const STORAGE_KEY_GANTT_TASKS = 'carga_maquina_gantt_tasks_v1';
 
 export default function App() {
+  // Active Module State (Carga Máquina vs Gantt EAP)
+  const [activeModule, setActiveModule] = useState<'capacity' | 'gantt'>('capacity');
+
   // Scenarios State
   const [scenarios, setScenarios] = useState<PlanningScenario[]>(() => {
     try {
@@ -147,6 +155,32 @@ export default function App() {
   const handleSaveTurbineTypes = (updated: TurbineType[]) => {
     setTurbineTypes(updated);
     localStorage.setItem(STORAGE_KEY_TURBINE_TYPES, JSON.stringify(updated));
+  };
+
+  // Gantt Tasks State (WBS 0..N Hierarchy)
+  const [ganttTasks, setGanttTasks] = useState<GanttTaskNode[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_GANTT_TASKS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return recalculateHierarchyRollup(parsed);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load gantt tasks from localStorage', e);
+    }
+    return recalculateHierarchyRollup(INITIAL_GANTT_TASKS);
+  });
+
+  const handleUpdateGanttTasks = (updated: GanttTaskNode[]) => {
+    const rolledUp = recalculateHierarchyRollup(updated);
+    setGanttTasks(rolledUp);
+    try {
+      localStorage.setItem(STORAGE_KEY_GANTT_TASKS, JSON.stringify(rolledUp));
+    } catch (e) {
+      console.error('Failed to save gantt tasks to localStorage', e);
+    }
   };
 
   // Modal States
@@ -1021,6 +1055,8 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row antialiased">
       {/* Sidebar Navigation (Side Menu) */}
       <Sidebar
+        activeModule={activeModule}
+        setActiveModule={setActiveModule}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenJsonModal={() => setIsJsonModalOpen(true)}
@@ -1051,72 +1087,88 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
         {/* Main Container */}
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
-        {/* Overview Tab (Visão Geral & KPIs: Macro / Executiva / Global) */}
-        {activeTab === 'overview' && (
-          <OverviewDashboard
-            kpis={kpis}
+        {/* MODULE 2: GANTT WBS MULTINÍVEL */}
+        {activeModule === 'gantt' && (
+          <GanttModuleView
+            tasks={ganttTasks}
+            onUpdateTasks={handleUpdateGanttTasks}
             workCenters={workCenters}
-            summaries={workCenterSummaries}
-            weeklyBuckets={weeklyBuckets}
             projects={projects}
-            sectorGroups={sectorGroups}
-            recommendations={recommendations}
-            onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
-            onNavigateToWorkCenters={handleNavigateToWorkCenters}
-            onNavigateToProjects={() => setActiveTab('projects')}
-            onNavigateToSimulation={() => setActiveTab('simulation')}
+            calendarExceptions={calendarExceptions}
           />
         )}
 
-        {/* Work Centers Tab (Centros de Trabalho: Micro / Operacional / Diagnóstico Individual) */}
-        {activeTab === 'workcenters' && (
-          <WorkCenterAnalysis
-            key={`${targetSectorFilter || 'all'}-${targetWcId || 'none'}`}
-            workCenters={workCenters}
-            summaries={workCenterSummaries}
-            weeklyBuckets={weeklyBuckets}
-            projects={projects}
-            sectorGroups={sectorGroups}
-            initialSectorFilter={targetSectorFilter}
-            initialWcId={targetWcId}
-            onUpdateWorkCenter={handleUpdateWorkCenter}
-            onUpdateProject={handleUpdateProject}
-            onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
-            onSelectWorkCenterForSimulation={() => setActiveTab('simulation')}
-          />
-        )}
+        {/* MODULE 1: CARGA MÁQUINA */}
+        {activeModule === 'capacity' && (
+          <>
+            {/* Overview Tab (Visão Geral & KPIs: Macro / Executiva / Global) */}
+            {activeTab === 'overview' && (
+              <OverviewDashboard
+                kpis={kpis}
+                workCenters={workCenters}
+                summaries={workCenterSummaries}
+                weeklyBuckets={weeklyBuckets}
+                projects={projects}
+                sectorGroups={sectorGroups}
+                recommendations={recommendations}
+                onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
+                onNavigateToWorkCenters={handleNavigateToWorkCenters}
+                onNavigateToProjects={() => setActiveTab('projects')}
+                onNavigateToSimulation={() => setActiveTab('simulation')}
+              />
+            )}
 
-        {/* Projects & Schedule Tab */}
-        {activeTab === 'projects' && (
-          <ProjectTimeline
-            projects={projects}
-            workCenters={workCenters}
-            sectorGroups={sectorGroups}
-            onUpdateProject={handleUpdateProject}
-            onDeleteProject={handleDeleteProject}
-            onOpenNewProjectModal={() => setIsNewProjectModalOpen(true)}
-            onOpenTurbineProjectModal={() => setIsTurbineProjectModalOpen(true)}
-            onOpenMatrixModal={() => setIsMatrixModalOpen(true)}
-          />
-        )}
+            {/* Work Centers Tab (Centros de Trabalho: Micro / Operacional / Diagnóstico Individual) */}
+            {activeTab === 'workcenters' && (
+              <WorkCenterAnalysis
+                key={`${targetSectorFilter || 'all'}-${targetWcId || 'none'}`}
+                workCenters={workCenters}
+                summaries={workCenterSummaries}
+                weeklyBuckets={weeklyBuckets}
+                projects={projects}
+                sectorGroups={sectorGroups}
+                initialSectorFilter={targetSectorFilter}
+                initialWcId={targetWcId}
+                onUpdateWorkCenter={handleUpdateWorkCenter}
+                onUpdateProject={handleUpdateProject}
+                onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
+                onSelectWorkCenterForSimulation={() => setActiveTab('simulation')}
+              />
+            )}
 
-        {/* Heatmap Tab */}
-        {activeTab === 'heatmap' && (
-          <CapacityHeatmap
-            workCenters={workCenters}
-            weeklyBuckets={weeklyBuckets}
-          />
-        )}
+            {/* Projects & Schedule Tab */}
+            {activeTab === 'projects' && (
+              <ProjectTimeline
+                projects={projects}
+                workCenters={workCenters}
+                sectorGroups={sectorGroups}
+                onUpdateProject={handleUpdateProject}
+                onDeleteProject={handleDeleteProject}
+                onOpenNewProjectModal={() => setIsNewProjectModalOpen(true)}
+                onOpenTurbineProjectModal={() => setIsTurbineProjectModalOpen(true)}
+                onOpenMatrixModal={() => setIsMatrixModalOpen(true)}
+              />
+            )}
 
-        {/* Simulation / AI Optimization Tab */}
-        {activeTab === 'simulation' && (
-          <SimulationsPanel
-            recommendations={recommendations}
-            overloadAlerts={overloadAlerts}
-            workCenters={workCenters}
-            onApplyAllRecommendations={handleApplyAllRecommendations}
-            onApplySingleRecommendation={handleApplySingleRecommendation}
-          />
+            {/* Heatmap Tab */}
+            {activeTab === 'heatmap' && (
+              <CapacityHeatmap
+                workCenters={workCenters}
+                weeklyBuckets={weeklyBuckets}
+              />
+            )}
+
+            {/* Simulation / AI Optimization Tab */}
+            {activeTab === 'simulation' && (
+              <SimulationsPanel
+                recommendations={recommendations}
+                overloadAlerts={overloadAlerts}
+                workCenters={workCenters}
+                onApplyAllRecommendations={handleApplyAllRecommendations}
+                onApplySingleRecommendation={handleApplySingleRecommendation}
+              />
+            )}
+          </>
         )}
       </main>
 

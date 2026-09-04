@@ -513,6 +513,8 @@ export function recalculateSectorWorkCenterHours({
     ? { ...currentConfig.customWorkCenterHours }
     : {};
 
+  const prevConfig = currentConfig.customSectorCurves?.[sectorName];
+
   // Reference base hours for the project
   const sumExistingHours = Object.entries(existingWcHours).reduce((sum, [k, h]) => {
     const isWcId = workCenters.some((wc) => wc.id === k);
@@ -529,8 +531,50 @@ export function recalculateSectorWorkCenterHours({
       (currentConfig.hoursPerTurbine || 10000) * (currentConfig.quantity || 1)
   );
 
-  let pct = typeof updatedConfig.percentage === 'number' ? Math.max(0, Math.min(100, updatedConfig.percentage)) : 0;
-  let gain = typeof updatedConfig.volumeGain === 'number' ? Math.max(0.1, Math.min(3.0, updatedConfig.volumeGain)) : 1.0;
+  // Detect whether hours-driving parameters changed:
+  const prevPct = prevConfig?.percentage;
+  const newPct = updatedConfig.percentage;
+  const pctChanged = prevPct !== undefined && newPct !== undefined && Math.abs(prevPct - newPct) > 0.001;
+
+  const prevGain = prevConfig?.volumeGain ?? 1.0;
+  const newGain = typeof updatedConfig.volumeGain === 'number' ? updatedConfig.volumeGain : prevGain;
+  const gainChanged = Math.abs(prevGain - newGain) > 0.001;
+
+  let sharesChanged = false;
+  const prevShares = prevConfig?.customWorkCenterShares;
+  const newShares = updatedConfig.customWorkCenterShares;
+  if (prevShares && newShares) {
+    const allKeys = new Set([...Object.keys(prevShares), ...Object.keys(newShares)]);
+    for (const k of allKeys) {
+      if (Math.abs((prevShares[k] ?? 0) - (newShares[k] ?? 0)) > 0.001) {
+        sharesChanged = true;
+        break;
+      }
+    }
+  } else if (!prevShares !== !newShares) {
+    sharesChanged = true;
+  }
+
+  // 1. TIMELINE-ONLY GUARD:
+  // If only timeline scheduling parameters (startPct, endPct, curveShape) changed:
+  // Strictly PRESERVE all existing work center hours and project total hours without any recalculation!
+  if (!pctChanged && !gainChanged && !sharesChanged && prevConfig) {
+    const finalSectorConfig: SectorCurveConfig = {
+      ...prevConfig,
+      startPct: updatedConfig.startPct ?? prevConfig.startPct,
+      endPct: updatedConfig.endPct ?? prevConfig.endPct,
+      curveShape: updatedConfig.curveShape ?? prevConfig.curveShape,
+    };
+
+    return {
+      updatedSectorConfig: finalSectorConfig,
+      updatedWorkCenterHours: existingWcHours,
+      newTotalHours: currentConfig.totalHours || sumExistingHours || projectRefHours,
+    };
+  }
+
+  let pct = typeof updatedConfig.percentage === 'number' ? Math.max(0, Math.min(100, updatedConfig.percentage)) : (prevPct ?? 0);
+  let gain = typeof updatedConfig.volumeGain === 'number' ? Math.max(0.1, Math.min(3.0, updatedConfig.volumeGain)) : (prevGain ?? 1.0);
 
   // Check previous sector hours in customWorkCenterHours
   const prevSectorHours = wcsInSector.reduce(
@@ -544,8 +588,18 @@ export function recalculateSectorWorkCenterHours({
     pct = fallbackTemplatePct;
   }
 
-  // Calculate sector target hours based on (projectRefHours * percentage * volumeGain / 100)
-  const targetSectorHours = Math.max(0, Math.round((projectRefHours * (pct * gain)) / 100));
+  // Calculate sector target hours:
+  // - If only shares changed, preserve the exact existing sector hours and just redistribute among centers
+  // - If only gain changed and sector already has custom hours, scale existing hours by ratio
+  // - Otherwise, calculate from percentage and gain
+  let targetSectorHours: number;
+  if (sharesChanged && !pctChanged && !gainChanged && prevSectorHours > 0) {
+    targetSectorHours = prevSectorHours;
+  } else if (gainChanged && !pctChanged && prevSectorHours > 0) {
+    targetSectorHours = Math.max(0, Math.round(prevSectorHours * (gain / (prevGain || 1.0))));
+  } else {
+    targetSectorHours = Math.max(0, Math.round((projectRefHours * (pct * gain)) / 100));
+  }
 
   // Determine work center shares
   const shares: Record<string, number> = { ...(updatedConfig.customWorkCenterShares || {}) };

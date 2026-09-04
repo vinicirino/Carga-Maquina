@@ -1,6 +1,6 @@
 {
   "name": "Análise de Carga Máquina",
-  "description": "Sistema de Gestão e Análise de Carga Máquina por Centro de Trabalho e Projeto com Simulação de Capacidade e Prazos.",
+  "description": "Sistema de Gestão de Carga Máquina, Análise de Capacidade Instalada e Módulo Gantt com EAP multinível (0..N), controle de contratos, centros de trabalho e suprimentos.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
