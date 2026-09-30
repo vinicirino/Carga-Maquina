@@ -43,44 +43,20 @@ import {
   CheckCircle,
   Info,
   X,
+  Cloud,
+  CloudOff,
+  RefreshCw,
 } from 'lucide-react';
-
-const STORAGE_KEY_WORKCENTERS = 'carga_maquina_workcenters_v1';
-const STORAGE_KEY_PROJECTS = 'carga_maquina_projects_v1';
-const STORAGE_KEY_SECTOR_GROUPS = 'carga_maquina_sector_groups_v1';
-const STORAGE_KEY_CALENDAR_EXCEPTIONS = 'carga_maquina_calendar_exceptions_v1';
-const STORAGE_KEY_TURBINE_TYPES = 'carga_maquina_turbine_types_v1';
-const STORAGE_KEY_SCENARIOS = 'carga_maquina_scenarios_v1';
-const STORAGE_KEY_ACTIVE_SCENARIO_ID = 'carga_maquina_active_scenario_id_v1';
-const STORAGE_KEY_GANTT_TASKS = 'carga_maquina_gantt_tasks_v1';
+import { isSupabaseConfigured } from './lib/supabase';
+import { SupabaseService } from './services/supabaseService';
 
 export default function App() {
   // Active Module State (Carga Máquina vs Gantt EAP)
   const [activeModule, setActiveModule] = useState<'capacity' | 'gantt'>('capacity');
 
-  // Scenarios State
-  const [scenarios, setScenarios] = useState<PlanningScenario[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_SCENARIOS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to load scenarios from localStorage', e);
-    }
-    return getInitialScenarios();
-  });
-
-  const [activeScenarioId, setActiveScenarioId] = useState<string>(() => {
-    try {
-      const savedId = localStorage.getItem(STORAGE_KEY_ACTIVE_SCENARIO_ID);
-      if (savedId && scenarios.some((s) => s.id === savedId)) return savedId;
-    } catch (e) {
-      console.error('Failed to load active scenario ID', e);
-    }
-    return scenarios[0]?.id || 'scen-1-baseline';
-  });
+  // Scenarios State - Loaded from Supabase, initialized with in-memory defaults
+  const [scenarios, setScenarios] = useState<PlanningScenario[]>(() => getInitialScenarios());
+  const [activeScenarioId, setActiveScenarioId] = useState<string>('scen-1-baseline');
 
   const activeScenario = useMemo(() => {
     return (
@@ -90,96 +66,40 @@ export default function App() {
     );
   }, [scenarios, activeScenarioId]);
 
-  // Active Data State (WorkCenters, Projects, SectorGroups, CalendarExceptions) initialized from active scenario or localStorage fallback
-  const [sectorGroups, setSectorGroups] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_SECTOR_GROUPS);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to load sector groups from localStorage', e);
-    }
-    return activeScenario?.sectorGroups || DEFAULT_SECTOR_GROUPS;
-  });
-
-  const [workCenters, setWorkCenters] = useState<WorkCenter[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_WORKCENTERS);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to load work centers from localStorage', e);
-    }
-    return activeScenario?.workCenters || INITIAL_DATA.workCenters;
-  });
-
-  const [projects, setProjects] = useState<Project[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_PROJECTS);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to load projects from localStorage', e);
-    }
-    return activeScenario?.projects || INITIAL_DATA.projects;
-  });
-
-  const [calendarExceptions, setCalendarExceptions] = useState<CalendarException[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_CALENDAR_EXCEPTIONS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to load calendar exceptions from localStorage', e);
-    }
-    return activeScenario?.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS;
-  });
+  // Active Data State (WorkCenters, Projects, SectorGroups, CalendarExceptions)
+  const [sectorGroups, setSectorGroups] = useState<string[]>(DEFAULT_SECTOR_GROUPS);
+  const [workCenters, setWorkCenters] = useState<WorkCenter[]>(INITIAL_DATA.workCenters);
+  const [projects, setProjects] = useState<Project[]>(INITIAL_DATA.projects);
+  const [calendarExceptions, setCalendarExceptions] = useState<CalendarException[]>(DEFAULT_CALENDAR_EXCEPTIONS);
 
   const [activeTab, setActiveTab] = useState<
     'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation'
   >('overview');
 
   // Turbine Types State
-  const [turbineTypes, setTurbineTypes] = useState<TurbineType[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_TURBINE_TYPES);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to load turbine types from localStorage', e);
-    }
-    return DEFAULT_TURBINE_TYPES;
-  });
+  const [turbineTypes, setTurbineTypes] = useState<TurbineType[]>(DEFAULT_TURBINE_TYPES);
 
   const handleSaveTurbineTypes = (updated: TurbineType[]) => {
     setTurbineTypes(updated);
-    localStorage.setItem(STORAGE_KEY_TURBINE_TYPES, JSON.stringify(updated));
+    if (isSupabaseConfigured) {
+      SupabaseService.saveAllTurbineTypes(updated).catch((err) => {
+        showToast(`Erro ao salvar modelos de turbina no Supabase: ${err.message}`, 'info');
+      });
+    }
   };
 
   // Gantt Tasks State (WBS 0..N Hierarchy)
-  const [ganttTasks, setGanttTasks] = useState<GanttTaskNode[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_GANTT_TASKS);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return recalculateHierarchyRollup(parsed);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load gantt tasks from localStorage', e);
-    }
-    return recalculateHierarchyRollup(INITIAL_GANTT_TASKS);
-  });
+  const [ganttTasks, setGanttTasks] = useState<GanttTaskNode[]>(() =>
+    recalculateHierarchyRollup(INITIAL_GANTT_TASKS)
+  );
 
   const handleUpdateGanttTasks = (updated: GanttTaskNode[]) => {
     const rolledUp = recalculateHierarchyRollup(updated);
     setGanttTasks(rolledUp);
-    try {
-      localStorage.setItem(STORAGE_KEY_GANTT_TASKS, JSON.stringify(rolledUp));
-    } catch (e) {
-      console.error('Failed to save gantt tasks to localStorage', e);
+    if (isSupabaseConfigured) {
+      SupabaseService.saveAllGanttTasks(rolledUp).catch((err) => {
+        showToast(`Erro ao salvar cronograma Gantt no Supabase: ${err.message}`, 'info');
+      });
     }
   };
 
@@ -198,6 +118,7 @@ export default function App() {
   const [scenarioImportExportTab, setScenarioImportExportTab] = useState<'export' | 'import'>('export');
   const [isDbResetModalOpen, setIsDbResetModalOpen] = useState(false);
   const [isPrintReportModalOpen, setIsPrintReportModalOpen] = useState(false);
+  const [isCloudLoading, setIsCloudLoading] = useState(isSupabaseConfigured);
 
   const handleOpenScenarioImportExportModal = (tab: 'export' | 'import' = 'export') => {
     setScenarioImportExportTab(tab);
@@ -213,45 +134,132 @@ export default function App() {
     }, 4500);
   };
 
-  // Check if an official baseline exists in localStorage
+  // Official Baseline check (reactive across all scenarios)
   const hasOfficialBaseline = useMemo(() => {
-    try {
-      const saved = localStorage.getItem('carga_maquina_primary_baseline_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return Boolean(parsed && parsed.scenarios && parsed.scenarios.length > 0);
-      }
-    } catch {
-      return false;
+    return scenarios.some((s) => s.isBaseline);
+  }, [scenarios]);
+
+  // Initial Data Load & Realtime Sync from Supabase Cloud
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setIsCloudLoading(false);
+      return;
     }
-    return false;
-  }, [scenarios]);
 
-  // Save scenarios array to localStorage
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_SCENARIOS, JSON.stringify(scenarios));
-  }, [scenarios]);
+    let isMounted = true;
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_ACTIVE_SCENARIO_ID, activeScenarioId);
-  }, [activeScenarioId]);
+    async function loadCloudData() {
+      setIsCloudLoading(true);
+      try {
+        const [
+          cloudWcs,
+          cloudProjects,
+          cloudExceptions,
+          cloudTurbines,
+          cloudGantt,
+          cloudScenarios,
+          savedActiveScenId,
+          savedSectorGroups,
+        ] = await Promise.all([
+          SupabaseService.fetchWorkCenters(),
+          SupabaseService.fetchProjects(),
+          SupabaseService.fetchCalendarExceptions(),
+          SupabaseService.fetchTurbineTypes(),
+          SupabaseService.fetchGanttTasks(),
+          SupabaseService.fetchScenarios(),
+          SupabaseService.fetchSystemState<string>('active_scenario_id', ''),
+          SupabaseService.fetchSystemState<string[]>('sector_groups', DEFAULT_SECTOR_GROUPS),
+        ]);
 
-  // Save to localStorage whenever workCenters, projects or sectorGroups change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_WORKCENTERS, JSON.stringify(workCenters));
-  }, [workCenters]);
+        if (!isMounted) return;
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
-  }, [projects]);
+        // If the Supabase database is completely fresh and empty, seed it once with standard corporate data
+        if (cloudWcs.length === 0 && cloudProjects.length === 0 && cloudScenarios.length === 0) {
+          const initScens = getInitialScenarios();
+          await Promise.all([
+            SupabaseService.saveAllWorkCenters(INITIAL_DATA.workCenters),
+            SupabaseService.saveAllProjects(INITIAL_DATA.projects),
+            SupabaseService.saveAllCalendarExceptions(DEFAULT_CALENDAR_EXCEPTIONS),
+            SupabaseService.saveAllTurbineTypes(DEFAULT_TURBINE_TYPES),
+            SupabaseService.saveAllGanttTasks(recalculateHierarchyRollup(INITIAL_GANTT_TASKS)),
+            SupabaseService.saveAllScenarios(initScens),
+            SupabaseService.saveSystemState('active_scenario_id', initScens[0].id),
+            SupabaseService.saveSystemState('sector_groups', DEFAULT_SECTOR_GROUPS),
+          ]);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_SECTOR_GROUPS, JSON.stringify(sectorGroups));
-  }, [sectorGroups]);
+          setWorkCenters(INITIAL_DATA.workCenters);
+          setProjects(INITIAL_DATA.projects);
+          setCalendarExceptions(DEFAULT_CALENDAR_EXCEPTIONS);
+          setTurbineTypes(DEFAULT_TURBINE_TYPES);
+          setGanttTasks(recalculateHierarchyRollup(INITIAL_GANTT_TASKS));
+          setScenarios(initScens);
+          setActiveScenarioId(initScens[0].id);
+          setSectorGroups(DEFAULT_SECTOR_GROUPS);
+          showToast('Banco de dados Supabase inicializado e sincronizado com sucesso!', 'success');
+        } else {
+          // Cloud database already has records - load them into state
+          if (cloudWcs.length > 0) setWorkCenters(cloudWcs);
+          if (cloudProjects.length > 0) setProjects(cloudProjects);
+          if (cloudExceptions.length > 0) setCalendarExceptions(cloudExceptions);
+          if (cloudTurbines.length > 0) setTurbineTypes(cloudTurbines);
+          if (cloudGantt.length > 0) setGanttTasks(recalculateHierarchyRollup(cloudGantt));
+          if (cloudScenarios.length > 0) {
+            setScenarios(cloudScenarios);
+            if (savedActiveScenId && cloudScenarios.some((s) => s.id === savedActiveScenId)) {
+              setActiveScenarioId(savedActiveScenId);
+              const activeScen = cloudScenarios.find((s) => s.id === savedActiveScenId);
+              if (activeScen) {
+                if (activeScen.workCenters?.length) setWorkCenters(activeScen.workCenters);
+                if (activeScen.projects?.length) setProjects(activeScen.projects);
+                if (activeScen.sectorGroups?.length) setSectorGroups(activeScen.sectorGroups);
+                if (activeScen.calendarExceptions?.length) setCalendarExceptions(activeScen.calendarExceptions);
+              }
+            } else {
+              setActiveScenarioId(cloudScenarios[0].id);
+            }
+          }
+          if (savedSectorGroups && savedSectorGroups.length > 0) {
+            setSectorGroups(savedSectorGroups);
+          }
+          showToast('Dados sincronizados em nuvem via Supabase!', 'success');
+        }
+      } catch (err: any) {
+        console.error('Falha ao sincronizar dados do Supabase:', err);
+        showToast(`Erro ao carregar dados do Supabase: ${err.message}. Verifique a conexão e RLS.`, 'info');
+      } finally {
+        if (isMounted) setIsCloudLoading(false);
+      }
+    }
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_CALENDAR_EXCEPTIONS, JSON.stringify(calendarExceptions));
-  }, [calendarExceptions]);
+    loadCloudData();
+
+    // Listen to real-time database changes from any other computer/browser
+    const unsubscribe = SupabaseService.subscribeToChanges((table) => {
+      console.log(`[Supabase Realtime] Tabela atualizada: ${table}`);
+      if (table === 'work_centers') {
+        SupabaseService.fetchWorkCenters().then((wcs) => isMounted && setWorkCenters(wcs)).catch(console.error);
+      } else if (table === 'projects') {
+        SupabaseService.fetchProjects().then((projs) => isMounted && setProjects(projs)).catch(console.error);
+      } else if (table === 'calendar_exceptions') {
+        SupabaseService.fetchCalendarExceptions().then((cal) => isMounted && setCalendarExceptions(cal)).catch(console.error);
+      } else if (table === 'turbine_types') {
+        SupabaseService.fetchTurbineTypes().then((types) => isMounted && setTurbineTypes(types)).catch(console.error);
+      } else if (table === 'gantt_tasks') {
+        SupabaseService.fetchGanttTasks().then((tasks) => isMounted && setGanttTasks(recalculateHierarchyRollup(tasks))).catch(console.error);
+      } else if (table === 'scenarios') {
+        SupabaseService.fetchScenarios().then((scens) => isMounted && setScenarios(scens)).catch(console.error);
+      } else if (table === 'system_state') {
+        SupabaseService.fetchSystemState<string>('active_scenario_id', '').then((id) => {
+          if (isMounted && id) setActiveScenarioId(id);
+        }).catch(console.error);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   // Check if current state differs from the active saved scenario state
   const isScenarioModified = useMemo(() => {
@@ -264,10 +272,10 @@ export default function App() {
   }, [workCenters, projects, sectorGroups, calendarExceptions, activeScenario]);
 
   // Scenario Management Handlers
-  const handleSelectScenario = (id: string) => {
+  const handleSelectScenario = async (id: string) => {
     if (id === activeScenarioId) return;
 
-    // 1. Snapshot current active scenario data into scenarios array so changes are preserved
+    // Snapshot current active scenario data
     const updatedScenarios = scenarios.map((s) => {
       if (s.id === activeScenarioId) {
         return {
@@ -291,24 +299,56 @@ export default function App() {
     setProjects(JSON.parse(JSON.stringify(target.projects)));
     setSectorGroups(JSON.parse(JSON.stringify(target.sectorGroups || DEFAULT_SECTOR_GROUPS)));
     setCalendarExceptions(JSON.parse(JSON.stringify(target.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS)));
+
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.saveAllScenarios(updatedScenarios),
+          SupabaseService.saveSystemState('active_scenario_id', id),
+          SupabaseService.saveAllWorkCenters(target.workCenters),
+          SupabaseService.saveAllProjects(target.projects),
+          SupabaseService.saveAllCalendarExceptions(target.calendarExceptions || []),
+          SupabaseService.saveSystemState('sector_groups', target.sectorGroups || DEFAULT_SECTOR_GROUPS),
+        ]);
+      } catch (err: any) {
+        showToast(`Erro ao sincronizar cenário ativo no Supabase: ${err.message}`, 'info');
+      }
+    }
   };
 
-  const handleSaveCurrentScenario = () => {
-    setScenarios((prev) =>
-      prev.map((scen) => {
-        if (scen.id === activeScenarioId) {
-          return {
-            ...scen,
-            workCenters: JSON.parse(JSON.stringify(workCenters)),
-            projects: JSON.parse(JSON.stringify(projects)),
-            sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
-            calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
-            updatedAt: new Date().toISOString(),
-          };
-        }
-        return scen;
-      })
-    );
+  const handleSaveCurrentScenario = async () => {
+    const updatedScenarios = scenarios.map((scen) => {
+      if (scen.id === activeScenarioId) {
+        return {
+          ...scen,
+          workCenters: JSON.parse(JSON.stringify(workCenters)),
+          projects: JSON.parse(JSON.stringify(projects)),
+          sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+          calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return scen;
+    });
+
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.saveAllScenarios(updatedScenarios),
+          SupabaseService.saveAllWorkCenters(workCenters),
+          SupabaseService.saveAllProjects(projects),
+          SupabaseService.saveAllCalendarExceptions(calendarExceptions),
+          SupabaseService.saveSystemState('sector_groups', sectorGroups),
+        ]);
+        showToast('✅ Alterações do cenário salvas e sincronizadas no Supabase!', 'success');
+      } catch (err: any) {
+        showToast(`Erro ao persistir cenário no Supabase: ${err.message}`, 'info');
+      }
+    } else {
+      showToast('Alterações salvas na sessão atual!', 'success');
+    }
   };
 
   const handleCreateScenario = (name: string, description: string, sourceScenarioId: string) => {
@@ -430,7 +470,7 @@ export default function App() {
     );
   };
 
-  const handleSetBaselineScenario = (id: string) => {
+  const handleSetBaselineScenario = async (id: string) => {
     const targetScen = scenarios.find((s) => s.id === id);
     const updatedScenarios = scenarios.map((s) => ({
       ...s,
@@ -439,27 +479,29 @@ export default function App() {
     setScenarios(updatedScenarios);
 
     if (targetScen) {
-      try {
-        localStorage.setItem(STORAGE_KEY_SCENARIOS, JSON.stringify(updatedScenarios));
-        localStorage.setItem(
-          'carga_maquina_primary_baseline_v1',
-          JSON.stringify({
-            savedAt: new Date().toISOString(),
-            activeScenarioId: id,
-            workCenters: targetScen.workCenters,
-            projects: targetScen.projects,
-            sectorGroups: targetScen.sectorGroups,
-            scenarios: updatedScenarios,
-          })
-        );
-      } catch (e) {
-        console.error('Error setting baseline scenario:', e);
+      if (isSupabaseConfigured) {
+        try {
+          await Promise.all([
+            SupabaseService.saveAllScenarios(updatedScenarios),
+            SupabaseService.saveSystemState('primary_baseline', {
+              savedAt: new Date().toISOString(),
+              activeScenarioId: id,
+              workCenters: targetScen.workCenters,
+              projects: targetScen.projects,
+              sectorGroups: targetScen.sectorGroups,
+              scenarios: updatedScenarios,
+            }),
+          ]);
+        } catch (e: any) {
+          console.error('Erro ao definir baseline no Supabase:', e);
+          showToast(`Erro ao definir baseline no Supabase: ${e.message}`, 'info');
+        }
       }
       showToast(`⭐ Cenário "${targetScen.name}" definido como a Base Primária Oficial (Baseline do PCP)!`);
     }
   };
 
-  const handleSaveAsPrimaryBaseline = () => {
+  const handleSaveAsPrimaryBaseline = async () => {
     // 1. Synchronize current state to active scenario
     const updatedScenarios = scenarios.map((scen) => {
       if (scen.id === activeScenarioId) {
@@ -480,26 +522,28 @@ export default function App() {
 
     setScenarios(updatedScenarios);
 
-    // 2. Persist to primary baseline storage keys
-    try {
-      localStorage.setItem(STORAGE_KEY_SCENARIOS, JSON.stringify(updatedScenarios));
-      localStorage.setItem(STORAGE_KEY_ACTIVE_SCENARIO_ID, activeScenarioId);
-      localStorage.setItem(STORAGE_KEY_WORKCENTERS, JSON.stringify(workCenters));
-      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
-      localStorage.setItem(STORAGE_KEY_SECTOR_GROUPS, JSON.stringify(sectorGroups));
-      localStorage.setItem(
-        'carga_maquina_primary_baseline_v1',
-        JSON.stringify({
-          savedAt: new Date().toISOString(),
-          activeScenarioId,
-          workCenters,
-          projects,
-          sectorGroups,
-          scenarios: updatedScenarios,
-        })
-      );
-    } catch (e) {
-      console.error('Error saving primary baseline:', e);
+    // 2. Persist to Supabase
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.saveAllScenarios(updatedScenarios),
+          SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
+          SupabaseService.saveAllWorkCenters(workCenters),
+          SupabaseService.saveAllProjects(projects),
+          SupabaseService.saveSystemState('sector_groups', sectorGroups),
+          SupabaseService.saveSystemState('primary_baseline', {
+            savedAt: new Date().toISOString(),
+            activeScenarioId,
+            workCenters,
+            projects,
+            sectorGroups,
+            scenarios: updatedScenarios,
+          }),
+        ]);
+      } catch (e: any) {
+        console.error('Erro ao salvar baseline primária no Supabase:', e);
+        showToast(`Erro ao persistir baseline no Supabase: ${e.message}`, 'info');
+      }
     }
 
     const currentName = activeScenario?.name || 'Cenário Ativo';
@@ -980,31 +1024,77 @@ export default function App() {
     setWorkCenters(cleanWcs);
     setProjects(cleanProjects);
     setSectorGroups(DEFAULT_SECTOR_GROUPS);
-  };
 
-  const handleRestoreOfficialBaseline = () => {
-    try {
-      const saved = localStorage.getItem('carga_maquina_primary_baseline_v1');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.scenarios && parsed.scenarios.length > 0) {
-          setScenarios(parsed.scenarios);
-          const targetId = parsed.activeScenarioId || parsed.scenarios[0].id;
-          setActiveScenarioId(targetId);
-          const target = parsed.scenarios.find((s: any) => s.id === targetId) || parsed.scenarios[0];
-          setWorkCenters(target.workCenters);
-          setProjects(target.projects);
-          setSectorGroups(target.sectorGroups || DEFAULT_SECTOR_GROUPS);
-        }
-      }
-    } catch (e) {
-      console.error('Error loading baseline', e);
+    if (isSupabaseConfigured) {
+      Promise.all([
+        SupabaseService.saveAllWorkCenters(cleanWcs),
+        SupabaseService.saveAllProjects(cleanProjects),
+        SupabaseService.saveAllScenarios(cleanScenarios),
+        SupabaseService.saveSystemState('active_scenario_id', 'scen-1-empresa-base'),
+        SupabaseService.saveSystemState('sector_groups', DEFAULT_SECTOR_GROUPS),
+      ]).then(() => {
+        showToast('Base operacional limpa sincronizada no Supabase!', 'success');
+      }).catch((e) => {
+        showToast(`Erro ao sincronizar base limpa no Supabase: ${e.message}`, 'info');
+      });
     }
   };
 
-  const handleHardClearStorage = () => {
-    localStorage.clear();
-    window.location.reload();
+  const handleRestoreOfficialBaseline = async () => {
+    if (isSupabaseConfigured) {
+      try {
+        const saved = await SupabaseService.fetchSystemState<any>('primary_baseline', null);
+        if (saved && saved.scenarios && saved.scenarios.length > 0) {
+          setScenarios(saved.scenarios);
+          const targetId = saved.activeScenarioId || saved.scenarios[0].id;
+          setActiveScenarioId(targetId);
+          const target = saved.scenarios.find((s: any) => s.id === targetId) || saved.scenarios[0];
+          setWorkCenters(target.workCenters);
+          setProjects(target.projects);
+          setSectorGroups(target.sectorGroups || DEFAULT_SECTOR_GROUPS);
+          showToast('⭐ Linha de base oficial restaurada do Supabase com sucesso!', 'success');
+          return;
+        }
+      } catch (e: any) {
+        console.error('Erro ao carregar baseline do Supabase:', e);
+        showToast(`Erro ao carregar baseline do Supabase: ${e.message}`, 'info');
+        return;
+      }
+    }
+
+    const baselineScen = scenarios.find((s) => s.isBaseline);
+    if (baselineScen) {
+      setActiveScenarioId(baselineScen.id);
+      setWorkCenters(baselineScen.workCenters);
+      setProjects(baselineScen.projects);
+      setSectorGroups(baselineScen.sectorGroups || DEFAULT_SECTOR_GROUPS);
+      showToast(`⭐ Restaurado para o cenário baseline: "${baselineScen.name}"!`);
+    } else {
+      showToast('Nenhuma baseline oficial encontrada no banco de dados.', 'info');
+    }
+  };
+
+  const handleHardClearStorage = async () => {
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.saveAllWorkCenters([]),
+          SupabaseService.saveAllProjects([]),
+          SupabaseService.saveAllCalendarExceptions([]),
+          SupabaseService.saveAllTurbineTypes([]),
+          SupabaseService.saveAllGanttTasks([]),
+          SupabaseService.saveAllScenarios([]),
+          SupabaseService.saveSystemState('active_scenario_id', null),
+          SupabaseService.saveSystemState('primary_baseline', null),
+        ]);
+        showToast('Banco de dados Supabase limpo com sucesso!', 'info');
+        window.location.reload();
+      } catch (e: any) {
+        showToast(`Erro ao limpar dados no Supabase: ${e.message}`, 'info');
+      }
+    } else {
+      window.location.reload();
+    }
   };
 
   const handleApplySingleRecommendation = (wcId: string, newResources: number) => {
@@ -1087,6 +1177,33 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
         {/* Main Container */}
         <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-6">
+          {/* Cloud Sync Status Indicator */}
+          {isSupabaseConfigured ? (
+            <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-900 px-4 py-2 rounded-xl flex items-center justify-between text-xs shadow-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                <Cloud className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  <strong>Nuvem Supabase Ativa:</strong> Dados compartilhados em tempo real entre todos os computadores e navegadores.
+                </span>
+              </div>
+              {isCloudLoading && (
+                <div className="flex items-center gap-1.5 text-emerald-700 font-semibold text-[11px]">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Sincronizando...</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs shadow-xs">
+              <div className="flex items-center gap-2">
+                <CloudOff className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Persistência em Nuvem (Supabase):</strong> Para sincronizar alterações entre computadores em tempo real, configure <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_PUBLISHABLE_KEY</code> no arquivo <code>.env</code>.
+                </span>
+              </div>
+            </div>
+          )}
         {/* MODULE 2: GANTT WBS MULTINÍVEL */}
         {activeModule === 'gantt' && (
           <GanttModuleView
@@ -1254,6 +1371,8 @@ export default function App() {
         workCenters={workCenters}
         sectorGroups={sectorGroups}
         onAddProject={handleAddProject}
+        turbineTypes={turbineTypes}
+        onSaveTurbineTypes={handleSaveTurbineTypes}
       />
 
       <NewScenarioModal

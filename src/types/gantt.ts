@@ -58,6 +58,7 @@ export interface GanttTaskNode {
   dependencies?: string[]; // IDs de tarefas predecessoras (Término-Início)
   expanded?: boolean; // Estado de expansão na árvore
   treeDepth?: number; // Profundidade hierárquica calculada na árvore (0 = raiz, 1 = filho direto de N0, etc.)
+  sortOrder?: number;
   notes?: string;
   assignee?: string;
   color?: string;

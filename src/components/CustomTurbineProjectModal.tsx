@@ -57,9 +57,9 @@ interface CustomTurbineProjectModalProps {
   onAddProject: (project: Project) => void;
   projectToEdit?: Project | null;
   onUpdateProject?: (project: Project) => void;
+  turbineTypes?: TurbineType[];
+  onSaveTurbineTypes?: (types: TurbineType[]) => void;
 }
-
-const STORAGE_KEY_TURBINE_TYPES = 'carga_maquina_turbine_types_v1';
 
 export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps> = ({
   isOpen,
@@ -69,42 +69,21 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
   onAddProject,
   projectToEdit,
   onUpdateProject,
+  turbineTypes: initialTurbineTypes,
+  onSaveTurbineTypes,
 }) => {
-  // Turbine Types State
-  const [turbineTypes, setTurbineTypes] = useState<TurbineType[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_TURBINE_TYPES);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.error('Failed to load turbine types from localStorage', e);
-    }
-    return DEFAULT_TURBINE_TYPES;
-  });
+  // Turbine Types State sourced centrally from Supabase / App state
+  const turbineTypes = useMemo(() => {
+    return initialTurbineTypes && initialTurbineTypes.length > 0
+      ? initialTurbineTypes
+      : DEFAULT_TURBINE_TYPES;
+  }, [initialTurbineTypes]);
 
   const handleSaveTurbineTypes = (updated: TurbineType[]) => {
-    setTurbineTypes(updated);
-    localStorage.setItem(STORAGE_KEY_TURBINE_TYPES, JSON.stringify(updated));
-  };
-
-  // Reload turbine types when modal opens to ensure changes from manager are synced
-  useEffect(() => {
-    if (isOpen) {
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY_TURBINE_TYPES);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setTurbineTypes(parsed);
-          }
-        }
-      } catch (e) {
-        console.error(e);
-      }
+    if (onSaveTurbineTypes) {
+      onSaveTurbineTypes(updated);
     }
-  }, [isOpen]);
+  };
 
   // Selected Turbine Model
   const [selectedTypeId, setSelectedTypeId] = useState<string>(
