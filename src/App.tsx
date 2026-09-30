@@ -50,6 +50,58 @@ import {
 import { isSupabaseConfigured } from './lib/supabase';
 import { SupabaseService } from './services/supabaseService';
 
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      {/* 5 KPI Cards Skeleton */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="bg-white border border-slate-200/80 rounded-2xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div className="h-3 w-20 bg-slate-200 rounded"></div>
+              <div className="w-8 h-8 rounded-xl bg-slate-100"></div>
+            </div>
+            <div className="h-7 w-28 bg-slate-200 rounded"></div>
+            <div className="h-3 w-24 bg-slate-100 rounded"></div>
+          </div>
+        ))}
+      </div>
+
+      {/* Alert Banner Skeleton */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-slate-100"></div>
+          <div className="space-y-1.5">
+            <div className="h-4 w-64 bg-slate-200 rounded"></div>
+            <div className="h-3 w-96 bg-slate-100 rounded"></div>
+          </div>
+        </div>
+        <div className="h-9 w-32 bg-slate-100 rounded-xl"></div>
+      </div>
+
+      {/* Chart Card Skeleton */}
+      <div className="bg-white border border-slate-200/80 rounded-2xl p-6 shadow-xs space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="space-y-1.5">
+            <div className="h-5 w-72 bg-slate-200 rounded"></div>
+            <div className="h-3 w-96 bg-slate-100 rounded"></div>
+          </div>
+          <div className="h-9 w-28 bg-slate-100 rounded-xl"></div>
+        </div>
+        <div className="h-72 w-full bg-slate-50 rounded-xl flex items-end justify-between p-6 gap-2">
+          {[40, 60, 45, 80, 70, 95, 65, 85, 90, 75, 60, 50, 65, 70, 80, 90, 85, 75].map((h, idx) => (
+            <div
+              key={idx}
+              className="flex-1 bg-slate-200/70 rounded-t"
+              style={{ height: `${h}%` }}
+            ></div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // Active Module State (Carga Máquina vs Gantt EAP)
   const [activeModule, setActiveModule] = useState<'capacity' | 'gantt'>('capacity');
@@ -119,6 +171,7 @@ export default function App() {
   const [isDbResetModalOpen, setIsDbResetModalOpen] = useState(false);
   const [isPrintReportModalOpen, setIsPrintReportModalOpen] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(isSupabaseConfigured);
+  const [isInitialLoading, setIsInitialLoading] = useState(isSupabaseConfigured);
 
   const handleOpenScenarioImportExportModal = (tab: 'export' | 'import' = 'export') => {
     setScenarioImportExportTab(tab);
@@ -143,6 +196,7 @@ export default function App() {
   useEffect(() => {
     if (!isSupabaseConfigured) {
       setIsCloudLoading(false);
+      setIsInitialLoading(false);
       return;
     }
 
@@ -205,28 +259,51 @@ export default function App() {
           showToast('Banco de dados Supabase inicializado e sincronizado com sucesso!', 'success');
         } else {
           // Cloud database already has records - load them into state
-          if (cloudWcs.length > 0) setWorkCenters(cloudWcs);
-          if (cloudProjects.length > 0) setProjects(cloudProjects);
-          if (cloudExceptions.length > 0) setCalendarExceptions(cloudExceptions);
           if (cloudTurbines.length > 0) setTurbineTypes(cloudTurbines);
           if (cloudGantt.length > 0) setGanttTasks(recalculateHierarchyRollup(cloudGantt));
+
           if (cloudScenarios.length > 0) {
             setScenarios(cloudScenarios);
-            if (savedActiveScenId && cloudScenarios.some((s) => s.id === savedActiveScenId)) {
-              setActiveScenarioId(savedActiveScenId);
-              const activeScen = cloudScenarios.find((s) => s.id === savedActiveScenId);
-              if (activeScen) {
-                if (activeScen.workCenters?.length) setWorkCenters(activeScen.workCenters);
-                if (activeScen.projects?.length) setProjects(activeScen.projects);
-                if (activeScen.sectorGroups?.length) setSectorGroups(activeScen.sectorGroups);
-                if (activeScen.calendarExceptions?.length) setCalendarExceptions(activeScen.calendarExceptions);
-              }
-            } else {
-              setActiveScenarioId(cloudScenarios[0].id);
+            const activeId =
+              savedActiveScenId && cloudScenarios.some((s) => s.id === savedActiveScenId)
+                ? savedActiveScenId
+                : cloudScenarios[0].id;
+            setActiveScenarioId(activeId);
+
+            const activeScen = cloudScenarios.find((s) => s.id === activeId) || cloudScenarios[0];
+            if (activeScen) {
+              setWorkCenters(
+                activeScen.workCenters && activeScen.workCenters.length > 0
+                  ? activeScen.workCenters
+                  : cloudWcs.length > 0
+                  ? cloudWcs
+                  : INITIAL_DATA.workCenters
+              );
+              setProjects(
+                activeScen.projects && activeScen.projects.length > 0
+                  ? activeScen.projects
+                  : cloudProjects.length > 0
+                  ? cloudProjects
+                  : INITIAL_DATA.projects
+              );
+              setSectorGroups(
+                activeScen.sectorGroups && activeScen.sectorGroups.length > 0
+                  ? activeScen.sectorGroups
+                  : savedSectorGroups && savedSectorGroups.length > 0
+                  ? savedSectorGroups
+                  : DEFAULT_SECTOR_GROUPS
+              );
+              setCalendarExceptions(
+                activeScen.calendarExceptions && activeScen.calendarExceptions.length > 0
+                  ? activeScen.calendarExceptions
+                  : cloudExceptions
+              );
             }
-          }
-          if (savedSectorGroups && savedSectorGroups.length > 0) {
-            setSectorGroups(savedSectorGroups);
+          } else {
+            if (cloudWcs.length > 0) setWorkCenters(cloudWcs);
+            if (cloudProjects.length > 0) setProjects(cloudProjects);
+            if (cloudExceptions.length > 0) setCalendarExceptions(cloudExceptions);
+            if (savedSectorGroups && savedSectorGroups.length > 0) setSectorGroups(savedSectorGroups);
           }
           showToast('Dados sincronizados em nuvem via Supabase!', 'success');
         }
@@ -234,7 +311,10 @@ export default function App() {
         console.error('Falha ao sincronizar dados do Supabase:', err);
         showToast(`Erro ao carregar dados do Supabase: ${err.message}. Verifique a conexão e RLS.`, 'info');
       } finally {
-        if (isMounted) setIsCloudLoading(false);
+        if (isMounted) {
+          setIsCloudLoading(false);
+          setIsInitialLoading(false);
+        }
       }
     }
 
@@ -358,7 +438,7 @@ export default function App() {
     }
   };
 
-  const handleCreateScenario = (name: string, description: string, sourceScenarioId: string) => {
+  const handleCreateScenario = async (name: string, description: string, sourceScenarioId: string) => {
     let sourceWcs = workCenters;
     let sourceProjects = projects;
     let sourceGroups = sectorGroups;
@@ -419,9 +499,25 @@ export default function App() {
     setProjects(newScen.projects);
     setSectorGroups(newScen.sectorGroups);
     setCalendarExceptions(newScen.calendarExceptions || []);
+
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.saveAllScenarios(nextScenarios),
+          SupabaseService.saveSystemState('active_scenario_id', newScen.id),
+          SupabaseService.saveAllWorkCenters(newScen.workCenters),
+          SupabaseService.saveAllProjects(newScen.projects),
+          SupabaseService.saveAllCalendarExceptions(newScen.calendarExceptions || []),
+          SupabaseService.saveSystemState('sector_groups', newScen.sectorGroups),
+        ]);
+        showToast(`✅ Cenário "${newScen.name}" criado e sincronizado no Supabase!`, 'success');
+      } catch (err: any) {
+        console.error('Erro ao persistir novo cenário no Supabase:', err);
+      }
+    }
   };
 
-  const handleDuplicateScenario = (id: string) => {
+  const handleDuplicateScenario = async (id: string) => {
     // Snapshot current active scenario
     const currentScenariosSnapshot = scenarios.map((s) => {
       if (s.id === activeScenarioId) {
@@ -465,16 +561,42 @@ export default function App() {
     setProjects(dupScen.projects);
     setSectorGroups(dupScen.sectorGroups);
     setCalendarExceptions(dupScen.calendarExceptions || []);
+
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.saveAllScenarios(nextScenarios),
+          SupabaseService.saveSystemState('active_scenario_id', dupScen.id),
+          SupabaseService.saveAllWorkCenters(dupScen.workCenters),
+          SupabaseService.saveAllProjects(dupScen.projects),
+          SupabaseService.saveAllCalendarExceptions(dupScen.calendarExceptions || []),
+          SupabaseService.saveSystemState('sector_groups', dupScen.sectorGroups),
+        ]);
+        showToast(`✅ Cenário "${dupScen.name}" duplicado e salvo no Supabase!`, 'success');
+      } catch (err: any) {
+        console.error('Erro ao persistir cenário duplicado no Supabase:', err);
+      }
+    }
   };
 
-  const handleUpdateScenarioInfo = (id: string, name: string, description: string) => {
-    setScenarios((prev) =>
-      prev.map((s) =>
-        s.id === id
-          ? { ...s, name, description, updatedAt: new Date().toISOString() }
-          : s
-      )
+  const handleUpdateScenarioInfo = async (id: string, name: string, description: string) => {
+    const updated = scenarios.map((s) =>
+      s.id === id
+        ? { ...s, name, description, updatedAt: new Date().toISOString() }
+        : s
     );
+    setScenarios(updated);
+
+    if (isSupabaseConfigured) {
+      try {
+        const target = updated.find((s) => s.id === id);
+        if (target) {
+          await SupabaseService.saveScenario(target);
+        }
+      } catch (err: any) {
+        console.error('Erro ao atualizar informações do cenário:', err);
+      }
+    }
   };
 
   const handleSetBaselineScenario = async (id: string) => {
@@ -557,8 +679,11 @@ export default function App() {
     showToast(`⭐ Base Primária Oficial Fixada! O estado atual de "${currentName}" é a referência padrão do PCP.`);
   };
 
-  const handleDeleteScenario = (id: string) => {
+  const handleDeleteScenario = async (id: string) => {
     const remaining = scenarios.filter((s) => s.id !== id);
+    let fallbackScenarios = remaining;
+    let nextActiveId = activeScenarioId;
+
     if (remaining.length === 0) {
       const cleanWcs = workCenters.map((wc) => ({
         ...wc,
@@ -578,46 +703,73 @@ export default function App() {
         projects: [],
         sectorGroups: sectorGroups.length > 0 ? sectorGroups : DEFAULT_SECTOR_GROUPS,
       };
-      setScenarios([fallback]);
-      setActiveScenarioId(fallback.id);
+      fallbackScenarios = [fallback];
+      nextActiveId = fallback.id;
+      setScenarios(fallbackScenarios);
+      setActiveScenarioId(nextActiveId);
       setWorkCenters(cleanWcs);
       setProjects([]);
       setSectorGroups(fallback.sectorGroups);
-      return;
+    } else {
+      const hasBaseline = remaining.some((s) => s.isBaseline);
+      fallbackScenarios = !hasBaseline
+        ? remaining.map((s, idx) => (idx === 0 ? { ...s, isBaseline: true } : s))
+        : remaining;
+
+      setScenarios(fallbackScenarios);
+      if (activeScenarioId === id) {
+        const fallback = fallbackScenarios[0];
+        nextActiveId = fallback.id;
+        setActiveScenarioId(fallback.id);
+        setWorkCenters(JSON.parse(JSON.stringify(fallback.workCenters)));
+        setProjects(JSON.parse(JSON.stringify(fallback.projects)));
+        setSectorGroups(JSON.parse(JSON.stringify(fallback.sectorGroups)));
+        setCalendarExceptions(JSON.parse(JSON.stringify(fallback.calendarExceptions || [])));
+      }
     }
 
-    const hasBaseline = remaining.some((s) => s.isBaseline);
-    const updatedRemaining = !hasBaseline
-      ? remaining.map((s, idx) => (idx === 0 ? { ...s, isBaseline: true } : s))
-      : remaining;
-
-    setScenarios(updatedRemaining);
-    if (activeScenarioId === id) {
-      const fallback = updatedRemaining[0];
-      setActiveScenarioId(fallback.id);
-      setWorkCenters(JSON.parse(JSON.stringify(fallback.workCenters)));
-      setProjects(JSON.parse(JSON.stringify(fallback.projects)));
-      setSectorGroups(JSON.parse(JSON.stringify(fallback.sectorGroups)));
+    if (isSupabaseConfigured) {
+      try {
+        await Promise.all([
+          SupabaseService.deleteScenario(id),
+          SupabaseService.saveAllScenarios(fallbackScenarios),
+          SupabaseService.saveSystemState('active_scenario_id', nextActiveId),
+        ]);
+        showToast('Cenário excluído e sincronizado no Supabase.', 'info');
+      } catch (err: any) {
+        console.error('Erro ao excluir cenário no Supabase:', err);
+      }
     }
   };
 
-  const handleAddSectorGroup = (groupName: string) => {
+  const handleAddSectorGroup = async (groupName: string) => {
     const trimmed = groupName.trim().toUpperCase();
     if (!trimmed) return;
     if (!sectorGroups.includes(trimmed)) {
       const next = [...sectorGroups, trimmed];
       setSectorGroups(next);
-      setScenarios((prev) =>
-        prev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, sectorGroups: next, updatedAt: new Date().toISOString() }
-            : s
-        )
+      const updatedScenarios = scenarios.map((s) =>
+        s.id === activeScenarioId
+          ? { ...s, sectorGroups: next, updatedAt: new Date().toISOString() }
+          : s
       );
+      setScenarios(updatedScenarios);
+
+      if (isSupabaseConfigured) {
+        try {
+          const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+          await Promise.all([
+            SupabaseService.saveSystemState('sector_groups', next),
+            activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao salvar agrupadores no Supabase:', err);
+        }
+      }
     }
   };
 
-  const handleDeleteSectorGroup = (groupName: string) => {
+  const handleDeleteSectorGroup = async (groupName: string) => {
     if (sectorGroups.length <= 1) {
       showToast('É necessário ter ao menos um agrupador cadastrado.', 'info');
       return;
@@ -629,13 +781,25 @@ export default function App() {
     );
     setSectorGroups(nextGroups);
     setWorkCenters(nextWcs);
-    setScenarios((prev) =>
-      prev.map((s) =>
-        s.id === activeScenarioId
-          ? { ...s, sectorGroups: nextGroups, workCenters: nextWcs, updatedAt: new Date().toISOString() }
-          : s
-      )
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, sectorGroups: nextGroups, workCenters: nextWcs, updatedAt: new Date().toISOString() }
+        : s
     );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveSystemState('sector_groups', nextGroups),
+          SupabaseService.saveAllWorkCenters(nextWcs),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao excluir agrupador no Supabase:', err);
+      }
+    }
   };
 
   // Execute Capacity & Workload Calculation Engine (with dynamic holiday/vacation capacity adjustments)
@@ -652,87 +816,157 @@ export default function App() {
   } = calculationResult;
 
   // Handlers
-  const handleSaveCalendarExceptions = (newExceptions: CalendarException[]) => {
+  const handleSaveCalendarExceptions = async (newExceptions: CalendarException[]) => {
     setCalendarExceptions(newExceptions);
-    setScenarios((prev) =>
-      prev.map((s) =>
-        s.id === activeScenarioId
-          ? { ...s, calendarExceptions: newExceptions, updatedAt: new Date().toISOString() }
-          : s
-      )
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, calendarExceptions: newExceptions, updatedAt: new Date().toISOString() }
+        : s
     );
-    showToast(`📅 Calendário Fabril atualizado (${newExceptions.length} eventos configurados)!`);
-  };
-  const handleUpdateWorkCenter = (updated: WorkCenter) => {
-    setWorkCenters((prev) => {
-      const next = prev.map((wc) => (wc.id === updated.id ? updated : wc));
-      setScenarios((scenPrev) =>
-        scenPrev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
-            : s
-        )
-      );
-      return next;
-    });
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveAllCalendarExceptions(newExceptions),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+        showToast(`📅 Calendário Fabril atualizado (${newExceptions.length} eventos sincronizados no Supabase)!`, 'success');
+      } catch (err: any) {
+        console.error('Erro ao salvar calendário no Supabase:', err);
+        showToast(`Erro ao sincronizar calendário no Supabase: ${err.message}`, 'info');
+      }
+    } else {
+      showToast(`📅 Calendário Fabril atualizado (${newExceptions.length} eventos configurados)!`);
+    }
   };
 
-  const handleSaveWorkCenters = (newWcs: WorkCenter[]) => {
+  const handleUpdateWorkCenter = async (updated: WorkCenter) => {
+    const next = workCenters.map((wc) => (wc.id === updated.id ? updated : wc));
+    setWorkCenters(next);
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
+        : s
+    );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveWorkCenter(updated),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao atualizar centro de trabalho no Supabase:', err);
+      }
+    }
+  };
+
+  const handleSaveWorkCenters = async (newWcs: WorkCenter[]) => {
     setWorkCenters(newWcs);
-    setScenarios((prev) =>
-      prev.map((s) =>
-        s.id === activeScenarioId
-          ? { ...s, workCenters: newWcs, updatedAt: new Date().toISOString() }
-          : s
-      )
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, workCenters: newWcs, updatedAt: new Date().toISOString() }
+        : s
     );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveAllWorkCenters(newWcs),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+        showToast(`✅ ${newWcs.length} centros de trabalho salvos e sincronizados no Supabase!`, 'success');
+      } catch (err: any) {
+        console.error('Erro ao salvar centros de trabalho no Supabase:', err);
+        showToast(`Erro ao sincronizar centros de trabalho: ${err.message}`, 'info');
+      }
+    }
   };
 
-  const handleUpdateProject = (updated: Project) => {
+  const handleUpdateProject = async (updated: Project) => {
     const cleanProject = sanitizeProjectSchedules(updated, workCenters);
-    setProjects((prev) => {
-      const next = prev.map((p) => (p.id === cleanProject.id ? cleanProject : p));
-      setScenarios((scenPrev) =>
-        scenPrev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, projects: next, updatedAt: new Date().toISOString() }
-            : s
-        )
-      );
-      return next;
-    });
+    const next = projects.map((p) => (p.id === cleanProject.id ? cleanProject : p));
+    setProjects(next);
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, projects: next, updatedAt: new Date().toISOString() }
+        : s
+    );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveProject(cleanProject),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao atualizar projeto no Supabase:', err);
+      }
+    }
   };
 
-  const handleDeleteProject = (projectId: string) => {
-    setProjects((prev) => {
-      const next = prev.filter((p) => p.id !== projectId);
-      setScenarios((scenPrev) =>
-        scenPrev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, projects: next, updatedAt: new Date().toISOString() }
-            : s
-        )
-      );
-      return next;
-    });
+  const handleDeleteProject = async (projectId: string) => {
+    const targetProj = projects.find((p) => p.id === projectId);
+    const next = projects.filter((p) => p.id !== projectId);
+    setProjects(next);
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, projects: next, updatedAt: new Date().toISOString() }
+        : s
+    );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.deleteProject(projectId),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+        showToast(`Projeto "${targetProj?.name || projectId}" removido e sincronizado!`, 'info');
+      } catch (err: any) {
+        console.error('Erro ao remover projeto no Supabase:', err);
+      }
+    }
   };
 
-  const handleAddProject = (newProject: Project) => {
+  const handleAddProject = async (newProject: Project) => {
     const cleanProject = sanitizeProjectSchedules(newProject, workCenters);
-    setProjects((prev) => {
-      const next = [...prev, cleanProject];
-      setScenarios((scenPrev) =>
-        scenPrev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, projects: next, updatedAt: new Date().toISOString() }
-            : s
-        )
-      );
-      return next;
-    });
+    const next = [...projects, cleanProject];
+    setProjects(next);
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, projects: next, updatedAt: new Date().toISOString() }
+        : s
+    );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveProject(cleanProject),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+        showToast(`✅ Projeto "${cleanProject.name}" salvo no Supabase!`, 'success');
+      } catch (err: any) {
+        console.error('Erro ao salvar projeto no Supabase:', err);
+        showToast(`Aviso: Projeto cadastrado localmente. Erro no Supabase: ${err.message}`, 'info');
+      }
+    } else {
+      showToast(`Projeto "${cleanProject.name}" adicionado com sucesso!`, 'success');
+    }
   };
 
-  const handleImportComplete = (payload: ImportPayload) => {
+  const handleImportComplete = async (payload: ImportPayload) => {
     const {
       mode,
       workCenters: newWcs,
@@ -755,6 +989,20 @@ export default function App() {
       setWorkCenters(activeTarget.workCenters);
       setProjects(activeTarget.projects);
       setSectorGroups(activeTarget.sectorGroups || validatedGroups);
+
+      if (isSupabaseConfigured) {
+        try {
+          await Promise.all([
+            SupabaseService.saveAllScenarios(newScenarios),
+            SupabaseService.saveSystemState('active_scenario_id', targetId),
+            SupabaseService.saveAllWorkCenters(activeTarget.workCenters),
+            SupabaseService.saveAllProjects(activeTarget.projects),
+            SupabaseService.saveSystemState('sector_groups', activeTarget.sectorGroups || validatedGroups),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao salvar cenários importados no Supabase:', err);
+        }
+      }
       return;
     }
 
@@ -769,11 +1017,26 @@ export default function App() {
         projects: newProjects,
         sectorGroups: validatedGroups,
       };
-      setScenarios((prev) => [...prev, newScen]);
+      const nextScens = [...scenarios, newScen];
+      setScenarios(nextScens);
       setActiveScenarioId(newScen.id);
       setWorkCenters(newWcs);
       setProjects(newProjects);
       setSectorGroups(validatedGroups);
+
+      if (isSupabaseConfigured) {
+        try {
+          await Promise.all([
+            SupabaseService.saveAllScenarios(nextScens),
+            SupabaseService.saveSystemState('active_scenario_id', newScen.id),
+            SupabaseService.saveAllWorkCenters(newWcs),
+            SupabaseService.saveAllProjects(newProjects),
+            SupabaseService.saveSystemState('sector_groups', validatedGroups),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao salvar novo cenário importado no Supabase:', err);
+        }
+      }
       return;
     }
 
@@ -781,22 +1044,35 @@ export default function App() {
     setWorkCenters(newWcs);
     setProjects(newProjects);
     setSectorGroups(validatedGroups);
-    setScenarios((prev) =>
-      prev.map((s) =>
-        s.id === activeScenarioId
-          ? {
-              ...s,
-              workCenters: newWcs,
-              projects: newProjects,
-              sectorGroups: validatedGroups,
-              updatedAt: new Date().toISOString(),
-            }
-          : s
-      )
+    const nextScens = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? {
+            ...s,
+            workCenters: newWcs,
+            projects: newProjects,
+            sectorGroups: validatedGroups,
+            updatedAt: new Date().toISOString(),
+          }
+        : s
     );
+    setScenarios(nextScens);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveAllWorkCenters(newWcs),
+          SupabaseService.saveAllProjects(newProjects),
+          SupabaseService.saveSystemState('sector_groups', validatedGroups),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao atualizar cenário corrente importado no Supabase:', err);
+      }
+    }
   };
 
-  const handleMatrixImportComplete = (payload: MatrixImportPayload) => {
+  const handleMatrixImportComplete = async (payload: MatrixImportPayload) => {
     const {
       mode,
       workCenters: newWcs,
@@ -822,12 +1098,27 @@ export default function App() {
         projects: sanitizedProjects,
         sectorGroups: validatedGroups,
       };
-      setScenarios((prev) => [...prev, newScen]);
+      const nextScens = [...scenarios, newScen];
+      setScenarios(nextScens);
       setActiveScenarioId(newScen.id);
       setWorkCenters(newWcs);
       setProjects(sanitizedProjects);
       setSectorGroups(validatedGroups);
       setActiveTab('projects');
+
+      if (isSupabaseConfigured) {
+        try {
+          await Promise.all([
+            SupabaseService.saveAllScenarios(nextScens),
+            SupabaseService.saveSystemState('active_scenario_id', newScen.id),
+            SupabaseService.saveAllWorkCenters(newWcs),
+            SupabaseService.saveAllProjects(sanitizedProjects),
+            SupabaseService.saveSystemState('sector_groups', validatedGroups),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao salvar planilha no Supabase:', err);
+        }
+      }
       return;
     }
 
@@ -836,20 +1127,33 @@ export default function App() {
       setWorkCenters(newWcs);
       setProjects(sanitizedProjects);
       setSectorGroups(validatedGroups);
-      setScenarios((prev) =>
-        prev.map((s) =>
-          s.id === activeScenarioId
-            ? {
-                ...s,
-                workCenters: newWcs,
-                projects: sanitizedProjects,
-                sectorGroups: validatedGroups,
-                updatedAt: new Date().toISOString(),
-              }
-            : s
-        )
+      const nextScens = scenarios.map((s) =>
+        s.id === activeScenarioId
+          ? {
+              ...s,
+              workCenters: newWcs,
+              projects: sanitizedProjects,
+              sectorGroups: validatedGroups,
+              updatedAt: new Date().toISOString(),
+            }
+          : s
       );
+      setScenarios(nextScens);
       setActiveTab('projects');
+
+      if (isSupabaseConfigured) {
+        try {
+          const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+          await Promise.all([
+            SupabaseService.saveAllWorkCenters(newWcs),
+            SupabaseService.saveAllProjects(sanitizedProjects),
+            SupabaseService.saveSystemState('sector_groups', validatedGroups),
+            activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao atualizar projetos importados no Supabase:', err);
+        }
+      }
       return;
     }
 
@@ -869,23 +1173,36 @@ export default function App() {
     setWorkCenters(newWcs);
     setProjects(mergedProjects);
     setSectorGroups(validatedGroups);
-    setScenarios((prev) =>
-      prev.map((s) =>
-        s.id === activeScenarioId
-          ? {
-              ...s,
-              workCenters: newWcs,
-              projects: mergedProjects,
-              sectorGroups: validatedGroups,
-              updatedAt: new Date().toISOString(),
-            }
-          : s
-      )
+    const nextScens = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? {
+            ...s,
+            workCenters: newWcs,
+            projects: mergedProjects,
+            sectorGroups: validatedGroups,
+            updatedAt: new Date().toISOString(),
+          }
+        : s
     );
+    setScenarios(nextScens);
     setActiveTab('projects');
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveAllWorkCenters(newWcs),
+          SupabaseService.saveAllProjects(mergedProjects),
+          SupabaseService.saveSystemState('sector_groups', validatedGroups),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao anexar projetos importados no Supabase:', err);
+      }
+    }
   };
 
-  const handleScenarioImport = (payload: ScenarioImportPayload) => {
+  const handleScenarioImport = async (payload: ScenarioImportPayload) => {
     const { mode, scenario, scenarios: importedScenarios, activeScenarioId: newActiveId, customScenarioName } = payload;
 
     if (mode === 'replace_all_scenarios' && importedScenarios && importedScenarios.length > 0) {
@@ -898,11 +1215,27 @@ export default function App() {
       setSectorGroups(activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS);
       setCalendarExceptions(activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS);
       showToast(`📦 Pacote com ${importedScenarios.length} cenários restaurado com sucesso!`);
+
+      if (isSupabaseConfigured) {
+        try {
+          await Promise.all([
+            SupabaseService.saveAllScenarios(importedScenarios),
+            SupabaseService.saveSystemState('active_scenario_id', targetId),
+            SupabaseService.saveAllWorkCenters(activeTarget.workCenters),
+            SupabaseService.saveAllProjects(activeTarget.projects),
+            SupabaseService.saveAllCalendarExceptions(activeTarget.calendarExceptions || []),
+            SupabaseService.saveSystemState('sector_groups', activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao restaurar cenários no Supabase:', err);
+        }
+      }
       return;
     }
 
     if (mode === 'append_scenarios' && importedScenarios && importedScenarios.length > 0) {
-      setScenarios((prev) => [...prev, ...importedScenarios]);
+      const nextScens = [...scenarios, ...importedScenarios];
+      setScenarios(nextScens);
       const targetId = newActiveId || importedScenarios[0]?.id;
       setActiveScenarioId(targetId);
       const activeTarget = importedScenarios.find((s) => s.id === targetId) || importedScenarios[0];
@@ -911,6 +1244,21 @@ export default function App() {
       setSectorGroups(activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS);
       setCalendarExceptions(activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS);
       showToast(`✨ ${importedScenarios.length} cenários adicionados à biblioteca!`);
+
+      if (isSupabaseConfigured) {
+        try {
+          await Promise.all([
+            SupabaseService.saveAllScenarios(nextScens),
+            SupabaseService.saveSystemState('active_scenario_id', targetId),
+            SupabaseService.saveAllWorkCenters(activeTarget.workCenters),
+            SupabaseService.saveAllProjects(activeTarget.projects),
+            SupabaseService.saveAllCalendarExceptions(activeTarget.calendarExceptions || []),
+            SupabaseService.saveSystemState('sector_groups', activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS),
+          ]);
+        } catch (err: any) {
+          console.error('Erro ao adicionar cenários no Supabase:', err);
+        }
+      }
       return;
     }
 
@@ -935,13 +1283,29 @@ export default function App() {
           calendarExceptions: scenarioCalendar,
         };
 
-        setScenarios((prev) => [...prev, newScen]);
+        const nextScens = [...scenarios, newScen];
+        setScenarios(nextScens);
         setActiveScenarioId(newScen.id);
         setWorkCenters(newScen.workCenters);
         setProjects(newScen.projects);
         setSectorGroups(scenarioGroups);
         setCalendarExceptions(scenarioCalendar);
         showToast(`✅ Novo Cenário "${scenarioName}" importado e ativado com sucesso!`);
+
+        if (isSupabaseConfigured) {
+          try {
+            await Promise.all([
+              SupabaseService.saveAllScenarios(nextScens),
+              SupabaseService.saveSystemState('active_scenario_id', newScen.id),
+              SupabaseService.saveAllWorkCenters(newScen.workCenters),
+              SupabaseService.saveAllProjects(newScen.projects),
+              SupabaseService.saveAllCalendarExceptions(scenarioCalendar),
+              SupabaseService.saveSystemState('sector_groups', scenarioGroups),
+            ]);
+          } catch (err: any) {
+            console.error('Erro ao salvar cenário importado no Supabase:', err);
+          }
+        }
         return;
       }
 
@@ -950,22 +1314,36 @@ export default function App() {
         setProjects(scenario.projects);
         setSectorGroups(scenarioGroups);
         setCalendarExceptions(scenarioCalendar);
-        setScenarios((prev) =>
-          prev.map((s) =>
-            s.id === activeScenarioId
-              ? {
-                  ...s,
-                  name: customScenarioName || s.name,
-                  workCenters: scenario.workCenters,
-                  projects: scenario.projects,
-                  sectorGroups: scenarioGroups,
-                  calendarExceptions: scenarioCalendar,
-                  updatedAt: new Date().toISOString(),
-                }
-              : s
-          )
+        const nextScens = scenarios.map((s) =>
+          s.id === activeScenarioId
+            ? {
+                ...s,
+                name: customScenarioName || s.name,
+                workCenters: scenario.workCenters,
+                projects: scenario.projects,
+                sectorGroups: scenarioGroups,
+                calendarExceptions: scenarioCalendar,
+                updatedAt: new Date().toISOString(),
+              }
+            : s
         );
+        setScenarios(nextScens);
         showToast(`✅ Cenário ativo atualizado exatamente com os dados do arquivo importado!`);
+
+        if (isSupabaseConfigured) {
+          try {
+            const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+            await Promise.all([
+              SupabaseService.saveAllWorkCenters(scenario.workCenters),
+              SupabaseService.saveAllProjects(scenario.projects),
+              SupabaseService.saveAllCalendarExceptions(scenarioCalendar),
+              SupabaseService.saveSystemState('sector_groups', scenarioGroups),
+              activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+            ]);
+          } catch (err: any) {
+            console.error('Erro ao substituir cenário no Supabase:', err);
+          }
+        }
       }
     }
   };
@@ -1104,36 +1482,55 @@ export default function App() {
     }
   };
 
-  const handleApplySingleRecommendation = (wcId: string, newResources: number) => {
-    setWorkCenters((prev) => {
-      const next = prev.map((wc) => (wc.id === wcId ? { ...wc, resourcesCount: newResources } : wc));
-      setScenarios((scenPrev) =>
-        scenPrev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
-            : s
-        )
-      );
-      return next;
-    });
+  const handleApplySingleRecommendation = async (wcId: string, newResources: number) => {
+    const next = workCenters.map((wc) => (wc.id === wcId ? { ...wc, resourcesCount: newResources } : wc));
+    setWorkCenters(next);
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
+        : s
+    );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const targetWc = next.find((w) => w.id === wcId);
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          targetWc ? SupabaseService.saveWorkCenter(targetWc) : Promise.resolve(),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao salvar recomendação no Supabase:', err);
+      }
+    }
   };
 
-  const handleApplyAllRecommendations = () => {
+  const handleApplyAllRecommendations = async () => {
     const recMap = new Map(recommendations.map((r) => [r.workCenterId, r.recommendedResources]));
-    setWorkCenters((prev) => {
-      const next = prev.map((wc) => {
-        const recRecs = recMap.get(wc.id);
-        return recRecs ? { ...wc, resourcesCount: recRecs } : wc;
-      });
-      setScenarios((scenPrev) =>
-        scenPrev.map((s) =>
-          s.id === activeScenarioId
-            ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
-            : s
-        )
-      );
-      return next;
+    const next = workCenters.map((wc) => {
+      const recRecs = recMap.get(wc.id);
+      return recRecs ? { ...wc, resourcesCount: recRecs } : wc;
     });
+    setWorkCenters(next);
+    const updatedScenarios = scenarios.map((s) =>
+      s.id === activeScenarioId
+        ? { ...s, workCenters: next, updatedAt: new Date().toISOString() }
+        : s
+    );
+    setScenarios(updatedScenarios);
+
+    if (isSupabaseConfigured) {
+      try {
+        const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
+        await Promise.all([
+          SupabaseService.saveAllWorkCenters(next),
+          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
+        ]);
+      } catch (err: any) {
+        console.error('Erro ao salvar recomendações no Supabase:', err);
+      }
+    }
     showToast('Todos os recursos foram reajustados para cobrir a demanda máxima de cada centro de trabalho!');
   };
 
@@ -1191,13 +1588,13 @@ export default function App() {
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                 <Cloud className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>
-                  <strong>Nuvem Supabase Ativa:</strong> Dados compartilhados em tempo real entre todos os computadores e navegadores.
+                  <strong>Nuvem Supabase Ativa:</strong> {isInitialLoading ? 'Conectando e carregando dados reais da fábrica...' : 'Dados compartilhados em tempo real entre todos os computadores e navegadores.'}
                 </span>
               </div>
-              {isCloudLoading && (
+              {(isCloudLoading || isInitialLoading) && (
                 <div className="flex items-center gap-1.5 text-emerald-700 font-semibold text-[11px]">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Sincronizando...</span>
+                  <span>{isInitialLoading ? 'Carregando banco...' : 'Sincronizando...'}</span>
                 </div>
               )}
             </div>
@@ -1211,16 +1608,22 @@ export default function App() {
               </div>
             </div>
           )}
-        {/* MODULE 2: GANTT WBS MULTINÍVEL */}
-        {activeModule === 'gantt' && (
-          <GanttModuleView
-            tasks={ganttTasks}
-            onUpdateTasks={handleUpdateGanttTasks}
-            workCenters={workCenters}
-            projects={projects}
-            calendarExceptions={calendarExceptions}
-          />
-        )}
+
+        {/* SKELETON ENQUANTO CARREGA OS DADOS REAIS DO SUPABASE */}
+        {isInitialLoading ? (
+          <DashboardSkeleton />
+        ) : (
+          <>
+            {/* MODULE 2: GANTT WBS MULTINÍVEL */}
+            {activeModule === 'gantt' && (
+              <GanttModuleView
+                tasks={ganttTasks}
+                onUpdateTasks={handleUpdateGanttTasks}
+                workCenters={workCenters}
+                projects={projects}
+                calendarExceptions={calendarExceptions}
+              />
+            )}
 
         {/* MODULE 1: CARGA MÁQUINA */}
         {activeModule === 'capacity' && (
@@ -1294,6 +1697,8 @@ export default function App() {
             )}
           </>
         )}
+        </>
+      )}
       </main>
 
         {/* Compact Footer */}
