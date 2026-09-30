@@ -439,6 +439,48 @@ export const SupabaseService = {
       if (error) throw new Error(error.message);
       return;
     }
+
+    // Auto-cura: Garante que os project_ids referenciados existam na tabela projects
+    // Isso evita falhas de chave estrangeira (gantt_tasks_project_id_fkey) caso a constraint ainda exista no Supabase
+    try {
+      const distinctProjectIds = Array.from(
+        new Set(tasks.map((t) => t.projectId).filter(Boolean))
+      ) as string[];
+
+      if (distinctProjectIds.length > 0) {
+        const { data: existingProjs } = await client
+          .from('projects')
+          .select('id')
+          .in('id', distinctProjectIds);
+
+        const existingSet = new Set((existingProjs || []).map((p: any) => p.id));
+        const missingIds = distinctProjectIds.filter((id) => !existingSet.has(id));
+
+        if (missingIds.length > 0) {
+          const rootTasks = tasks.filter((t) => t.level === 0);
+          const stubs = missingIds.map((id) => {
+            const root = rootTasks.find((t) => t.id === id || t.projectId === id);
+            return {
+              id,
+              name: root ? root.name : `Projeto Cronograma ${id}`,
+              start_date: root ? root.startDate : new Date().toISOString().split('T')[0],
+              end_date: root ? root.endDate : new Date(Date.now() + 180 * 86400000).toISOString().split('T')[0],
+              color: root?.color || '#4f46e5',
+              enabled: true,
+              work_center_hours: {},
+              work_center_dates: {},
+              group_dates: {},
+              updated_at: new Date().toISOString(),
+            };
+          });
+
+          await client.from('projects').upsert(stubs);
+        }
+      }
+    } catch (projSyncErr) {
+      console.warn('Aviso ao sincronizar projetos de suporte para o Gantt:', projSyncErr);
+    }
+
     const rows = tasks.map(mapGanttTaskToRow);
     const { error: upsertError } = await client.from('gantt_tasks').upsert(rows);
     if (upsertError) {

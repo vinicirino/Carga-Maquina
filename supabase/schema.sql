@@ -165,6 +165,11 @@ CREATE TABLE IF NOT EXISTS public.gantt_tasks (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
+-- Remove restrições de chave estrangeira antigas caso a tabela já existisse
+ALTER TABLE IF EXISTS public.gantt_tasks DROP CONSTRAINT IF EXISTS gantt_tasks_project_id_fkey;
+ALTER TABLE IF EXISTS public.gantt_tasks DROP CONSTRAINT IF EXISTS gantt_tasks_work_center_id_fkey;
+ALTER TABLE IF EXISTS public.gantt_tasks DROP CONSTRAINT IF EXISTS gantt_tasks_parent_id_fkey;
+
 ALTER TABLE public.gantt_tasks ADD COLUMN IF NOT EXISTS project_id TEXT;
 ALTER TABLE public.gantt_tasks ADD COLUMN IF NOT EXISTS parent_id TEXT;
 ALTER TABLE public.gantt_tasks ADD COLUMN IF NOT EXISTS level INTEGER NOT NULL DEFAULT 0;

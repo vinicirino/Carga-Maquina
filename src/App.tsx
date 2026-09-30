@@ -176,16 +176,23 @@ export default function App() {
         // If the Supabase database is completely fresh and empty, seed it once with standard corporate data
         if (cloudWcs.length === 0 && cloudProjects.length === 0 && cloudScenarios.length === 0) {
           const initScens = getInitialScenarios();
+          // 1. Salva entidades base em ordem segura
           await Promise.all([
             SupabaseService.saveAllWorkCenters(INITIAL_DATA.workCenters),
             SupabaseService.saveAllProjects(INITIAL_DATA.projects),
             SupabaseService.saveAllCalendarExceptions(DEFAULT_CALENDAR_EXCEPTIONS),
             SupabaseService.saveAllTurbineTypes(DEFAULT_TURBINE_TYPES),
-            SupabaseService.saveAllGanttTasks(recalculateHierarchyRollup(INITIAL_GANTT_TASKS)),
             SupabaseService.saveAllScenarios(initScens),
             SupabaseService.saveSystemState('active_scenario_id', initScens[0].id),
             SupabaseService.saveSystemState('sector_groups', DEFAULT_SECTOR_GROUPS),
           ]);
+
+          // 2. Salva o cronograma Gantt com proteção adicional
+          try {
+            await SupabaseService.saveAllGanttTasks(recalculateHierarchyRollup(INITIAL_GANTT_TASKS));
+          } catch (ganttErr) {
+            console.warn('Aviso ao inicializar tarefas do Gantt no Supabase:', ganttErr);
+          }
 
           setWorkCenters(INITIAL_DATA.workCenters);
           setProjects(INITIAL_DATA.projects);
