@@ -228,6 +228,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
               endPct: 60,
               curveShape: 's-curve',
               volumeGain: 1.0,
+              enabled: false,
             };
           }
         });
@@ -271,6 +272,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
             endPct: 60,
             curveShape: 's-curve',
             volumeGain: 1.0,
+            enabled: false,
           };
         }
       });
@@ -478,9 +480,11 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
     return calculateTurbineProject(calculationConfig, selectedTurbine, workCenters);
   }, [calculationConfig, selectedTurbine, workCenters]);
 
-  // Filtered sector entries for search
+  // Filtered sector entries for search (only active/enabled sectors)
   const filteredSectorEntries = useMemo(() => {
-    return Object.entries(customSectorCurves).filter(([secName]) => {
+    return Object.entries(customSectorCurves).filter(([secName, rawCfg]) => {
+      const cfg = rawCfg as SectorCurveConfig;
+      if (cfg?.enabled === false) return false;
       if (!searchTerm.trim()) return true;
       return secName.toLowerCase().includes(searchTerm.toLowerCase());
     });
@@ -986,7 +990,7 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Filtrar agrupador (Corte, Solda, Usinagem, Caldeiraria...)"
+                    placeholder="Filtrar grupo de trabalho (Corte, Solda, Usinagem, Caldeiraria...)"
                     className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-7 pr-2.5 py-1 text-xs text-slate-300 focus:border-indigo-500 focus:outline-none"
                   />
                 </div>

@@ -2,15 +2,43 @@ import { supabase, isSupabaseConfigured, getSupabase } from '../lib/supabase';
 import { WorkCenter, Project, CalendarException, PlanningScenario, DEFAULT_SECTOR_GROUPS } from '../types';
 import { TurbineType } from '../types/turbine';
 import { GanttTaskNode } from '../types/gantt';
+import { ensureValidIsoDate, sanitizeProjectSchedules } from '../utils/dateValidation';
 
 // ============================================================================
 // CONVERTERS: DTO / Database Row <-> TypeScript Models
 // ============================================================================
 
+function safeParseJson(val: any, fallback: any = {}) {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'object') return val;
+  if (typeof val === 'string') {
+    try {
+      return JSON.parse(val);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function safeParseJsonArray(val: any, fallback: any[] = []): any[] {
+  if (!val) return fallback;
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 function mapWorkCenterFromRow(row: any): WorkCenter {
   return {
-    id: row.id,
-    name: row.name,
+    id: String(row.id || `wc-${Date.now()}`),
+    name: String(row.name || 'Centro Sem Nome'),
     category: row.category || 'OUTROS',
     dailyHours: Number(row.daily_hours) || 8,
     daysPerWeek: Number(row.days_per_week) || 5,
@@ -22,8 +50,8 @@ function mapWorkCenterFromRow(row: any): WorkCenter {
 
 function mapWorkCenterToRow(wc: WorkCenter) {
   return {
-    id: wc.id,
-    name: wc.name,
+    id: String(wc.id || `wc-${Date.now()}`).trim(),
+    name: String(wc.name || 'Centro Sem Nome').trim(),
     category: wc.category || 'OUTROS',
     daily_hours: wc.dailyHours ?? 8,
     days_per_week: wc.daysPerWeek ?? 5,
@@ -35,32 +63,39 @@ function mapWorkCenterToRow(wc: WorkCenter) {
 }
 
 function mapProjectFromRow(row: any): Project {
+  const safeStartDate = ensureValidIsoDate(row.start_date, '2027-08-13');
+  const safeEndDate = ensureValidIsoDate(row.end_date, safeStartDate);
+
   return {
-    id: row.id,
-    name: row.name,
-    startDate: row.start_date,
-    endDate: row.end_date,
+    id: String(row.id || `proj-${Date.now()}`),
+    name: String(row.name || 'Projeto').trim(),
+    startDate: safeStartDate,
+    endDate: safeEndDate < safeStartDate ? safeStartDate : safeEndDate,
     color: row.color || '#3b82f6',
     enabled: row.enabled !== false,
-    workCenterHours: row.work_center_hours || {},
-    workCenterDates: row.work_center_dates || {},
-    groupDates: row.group_dates || {},
-    turbineConfig: row.turbine_config || undefined,
+    workCenterHours: safeParseJson(row.work_center_hours, {}),
+    workCenterDates: safeParseJson(row.work_center_dates, {}),
+    groupDates: safeParseJson(row.group_dates, {}),
+    turbineConfig: row.turbine_config ? safeParseJson(row.turbine_config, undefined) : undefined,
   };
 }
 
 function mapProjectToRow(p: Project) {
+  const clean = sanitizeProjectSchedules(p);
+  const safeStartDate = ensureValidIsoDate(clean.startDate, '2027-08-13');
+  const safeEndDate = ensureValidIsoDate(clean.endDate, safeStartDate);
+
   return {
-    id: p.id,
-    name: p.name,
-    start_date: p.startDate,
-    end_date: p.endDate,
-    color: p.color || '#3b82f6',
-    enabled: p.enabled !== false,
-    work_center_hours: p.workCenterHours || {},
-    work_center_dates: p.workCenterDates || {},
-    group_dates: p.groupDates || {},
-    turbine_config: p.turbineConfig || null,
+    id: String(clean.id || `proj-${Date.now()}`).trim(),
+    name: String(clean.name || 'Projeto').trim(),
+    start_date: safeStartDate,
+    end_date: safeEndDate < safeStartDate ? safeStartDate : safeEndDate,
+    color: clean.color || '#3b82f6',
+    enabled: clean.enabled !== false,
+    work_center_hours: clean.workCenterHours || {},
+    work_center_dates: clean.workCenterDates || {},
+    group_dates: clean.groupDates || {},
+    turbine_config: clean.turbineConfig || null,
     updated_at: new Date().toISOString(),
   };
 }
@@ -187,29 +222,45 @@ function mapGanttTaskToRow(g: GanttTaskNode) {
 }
 
 function mapScenarioFromRow(row: any): PlanningScenario {
+  // Support both schema conventions: projects_data vs projects, work_centers_data vs work_centers, etc.
+  const rawProjects = row.projects_data ?? row.projects ?? row.projects_json ?? [];
+  const rawWorkCenters = row.work_centers_data ?? row.work_centers ?? row.work_centers_json ?? [];
+  const rawCalendar = row.calendar_data ?? row.calendar_exceptions ?? row.calendarExceptions ?? [];
+  const rawSectorGroups = row.sector_groups_data ?? row.sector_groups ?? row.sectorGroups ?? DEFAULT_SECTOR_GROUPS;
+
+  const parsedWcs = safeParseJsonArray(rawWorkCenters, []);
+  const parsedProjects: Project[] = safeParseJsonArray(rawProjects, []).map((p: any) =>
+    sanitizeProjectSchedules(p)
+  );
+  const parsedGroups = safeParseJsonArray(rawSectorGroups, DEFAULT_SECTOR_GROUPS);
+  const parsedCalendar = safeParseJsonArray(rawCalendar, []);
+
   return {
-    id: row.id,
-    name: row.name,
-    description: row.description || '',
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id: String(row.id || `scen-${Date.now()}`),
+    name: String(row.name || 'Cenário').trim(),
+    description: String(row.description || '').trim(),
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
     isBaseline: Boolean(row.is_baseline),
-    workCenters: row.work_centers_data || [],
-    projects: row.projects_data || [],
-    sectorGroups: row.sector_groups_data || DEFAULT_SECTOR_GROUPS,
-    calendarExceptions: row.calendar_data || [],
+    workCenters: parsedWcs,
+    projects: parsedProjects,
+    sectorGroups: parsedGroups.length > 0 ? parsedGroups : DEFAULT_SECTOR_GROUPS,
+    calendarExceptions: parsedCalendar,
   };
 }
 
 function mapScenarioToRow(s: PlanningScenario) {
+  const safeId = String(s.id || `scen-${Date.now()}`).trim();
+  const safeProjects = (s.projects || []).map((p) => sanitizeProjectSchedules(p));
+
   return {
-    id: s.id,
-    name: s.name,
-    description: s.description || '',
+    id: safeId,
+    name: String(s.name || 'Cenário').trim(),
+    description: String(s.description || '').trim(),
     is_baseline: Boolean(s.isBaseline),
     work_centers_data: s.workCenters || [],
-    projects_data: s.projects || [],
-    sector_groups_data: s.sectorGroups || DEFAULT_SECTOR_GROUPS,
+    projects_data: safeProjects,
+    sector_groups_data: s.sectorGroups && s.sectorGroups.length > 0 ? s.sectorGroups : DEFAULT_SECTOR_GROUPS,
     calendar_data: s.calendarExceptions || [],
     created_at: s.createdAt || new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -249,7 +300,7 @@ export const SupabaseService = {
   async saveAllWorkCenters(wcs: WorkCenter[]): Promise<void> {
     const client = getSupabase();
     if (wcs.length === 0) {
-      const { error } = await client.from('work_centers').delete().neq('id', '');
+      const { error } = await client.from('work_centers').delete().neq('id', '___none___');
       if (error) throw new Error(error.message);
       return;
     }
@@ -260,13 +311,17 @@ export const SupabaseService = {
       throw new Error(`Falha ao atualizar centros de trabalho: ${upsertError.message}`);
     }
 
-    // Remover os que não estão mais presentes
-    const currentIds = wcs.map((w) => w.id);
-    const { error: delError } = await client
-      .from('work_centers')
-      .delete()
-      .not('id', 'in', `(${currentIds.map((id) => `'${id}'`).join(',')})`);
-    if (delError) {
+    // Remover os que foram excluídos de forma segura e garantida
+    try {
+      const { data: existing } = await client.from('work_centers').select('id');
+      if (existing && existing.length > 0) {
+        const keepSet = new Set(wcs.map((w) => w.id));
+        const toDelete = existing.filter((row: any) => !keepSet.has(row.id)).map((row: any) => row.id);
+        if (toDelete.length > 0) {
+          await client.from('work_centers').delete().in('id', toDelete);
+        }
+      }
+    } catch (delError) {
       console.warn('Aviso ao remover centros excluídos:', delError);
     }
   },
@@ -300,6 +355,26 @@ export const SupabaseService = {
     const row = mapProjectToRow(p);
     const { error } = await client.from('projects').upsert(row);
     if (error) {
+      // If error is due to missing columns in user's Supabase (e.g. turbine_config, group_dates, work_center_dates)
+      if (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204') {
+        console.warn('Tentando fallback de colunas na tabela projects:', error.message);
+        const fallbackRow = {
+          id: row.id,
+          name: row.name,
+          start_date: row.start_date,
+          end_date: row.end_date,
+          color: row.color,
+          enabled: row.enabled,
+          work_center_hours: row.work_center_hours,
+          updated_at: row.updated_at,
+        };
+        const { error: fallbackErr } = await client.from('projects').upsert(fallbackRow);
+        if (fallbackErr) {
+          console.error('Erro ao salvar projeto via fallback no Supabase:', fallbackErr);
+          throw new Error(`Falha ao salvar projeto: ${error.message}`);
+        }
+        return;
+      }
       console.error('Erro ao salvar projeto no Supabase:', error);
       throw new Error(`Falha ao salvar projeto: ${error.message}`);
     }
@@ -308,24 +383,63 @@ export const SupabaseService = {
   async saveAllProjects(projects: Project[]): Promise<void> {
     const client = getSupabase();
     if (projects.length === 0) {
-      const { error } = await client.from('projects').delete().neq('id', '');
+      const { error } = await client.from('projects').delete().neq('id', '___none___');
       if (error) throw new Error(error.message);
       return;
     }
-    const rows = projects.map(mapProjectToRow);
+
+    // Ensure strictly unique and valid IDs across the batch to prevent PostgreSQL ON CONFLICT errors
+    const seenIds = new Set<string>();
+    const sanitizedProjects = projects.map((p, idx) => {
+      let finalId = p.id && String(p.id).trim() ? String(p.id).trim() : `proj-${Date.now()}-${idx}`;
+      if (seenIds.has(finalId)) {
+        finalId = `${finalId}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
+      }
+      seenIds.add(finalId);
+      return sanitizeProjectSchedules({
+        ...p,
+        id: finalId,
+      });
+    });
+
+    const rows = sanitizedProjects.map(mapProjectToRow);
     const { error: upsertError } = await client.from('projects').upsert(rows);
     if (upsertError) {
-      console.error('Erro ao salvar projetos:', upsertError);
-      throw new Error(`Falha ao salvar projetos: ${upsertError.message}`);
+      // If error is due to missing columns in user's Supabase (e.g. turbine_config, group_dates, work_center_dates)
+      if (upsertError.message?.includes('column') || upsertError.code === '42703' || upsertError.code === 'PGRST204') {
+        console.warn('Tentando fallback de colunas na tabela projects:', upsertError.message);
+        const fallbackRows = rows.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          color: r.color,
+          enabled: r.enabled,
+          work_center_hours: r.work_center_hours,
+          updated_at: r.updated_at,
+        }));
+        const { error: fallbackErr } = await client.from('projects').upsert(fallbackRows);
+        if (fallbackErr) {
+          console.error('Erro ao salvar projetos via fallback no Supabase:', fallbackErr);
+          throw new Error(`Falha ao salvar projetos: ${upsertError.message}`);
+        }
+      } else {
+        console.error('Erro ao salvar projetos no Supabase:', upsertError);
+        throw new Error(`Falha ao salvar projetos: ${upsertError.message}`);
+      }
     }
 
-    // Remover projetos que foram excluídos
-    const currentIds = projects.map((p) => p.id);
-    const { error: delError } = await client
-      .from('projects')
-      .delete()
-      .not('id', 'in', `(${currentIds.map((id) => `'${id}'`).join(',')})`);
-    if (delError) {
+    // Remover projetos que foram excluídos de forma segura
+    try {
+      const { data: existing } = await client.from('projects').select('id');
+      if (existing && existing.length > 0) {
+        const keepSet = new Set(sanitizedProjects.map((p) => p.id));
+        const toDelete = existing.filter((row: any) => !keepSet.has(row.id)).map((row: any) => row.id);
+        if (toDelete.length > 0) {
+          await client.from('projects').delete().in('id', toDelete);
+        }
+      }
+    } catch (delError) {
       console.warn('Aviso ao remover projetos excluídos:', delError);
     }
   },
@@ -518,6 +632,38 @@ export const SupabaseService = {
     const row = mapScenarioToRow(scen);
     const { error } = await client.from('scenarios').upsert(row);
     if (error) {
+      // If error is due to column name difference in user database, attempt fallback schema
+      if (error.message?.includes('column') || error.code === '42703' || error.code === 'PGRST204') {
+        console.warn('Tentando fallback de colunas na tabela scenarios:', error.message);
+        // Fallback 1: Try with standard schema.sql column names (projects_data, work_centers_data) without extra fields
+        const fallback1: any = {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          is_baseline: row.is_baseline,
+          projects_data: row.projects_data,
+          work_centers_data: row.work_centers_data,
+          updated_at: row.updated_at,
+        };
+        const { error: err1 } = await client.from('scenarios').upsert(fallback1);
+        if (!err1) return;
+
+        // Fallback 2: Try with legacy column names (projects, work_centers)
+        const fallback2: any = {
+          id: row.id,
+          name: row.name,
+          description: row.description,
+          is_baseline: row.is_baseline,
+          projects: row.projects_data,
+          work_centers: row.work_centers_data,
+          updated_at: row.updated_at,
+        };
+        const { error: err2 } = await client.from('scenarios').upsert(fallback2);
+        if (!err2) return;
+
+        console.error('Erro ao salvar cenário via fallback no Supabase:', err2);
+        throw new Error(`Falha ao salvar cenário: ${error.message}`);
+      }
       console.error('Erro ao salvar cenário no Supabase:', error);
       throw new Error(`Falha ao salvar cenário: ${error.message}`);
     }
@@ -526,23 +672,74 @@ export const SupabaseService = {
   async saveAllScenarios(scenarios: PlanningScenario[]): Promise<void> {
     const client = getSupabase();
     if (scenarios.length === 0) {
-      const { error } = await client.from('scenarios').delete().neq('id', '');
+      const { error } = await client.from('scenarios').delete().neq('id', '___none___');
       if (error) throw new Error(error.message);
       return;
     }
-    const rows = scenarios.map(mapScenarioToRow);
+
+    // Ensure strictly unique and valid scenario IDs
+    const seenScenIds = new Set<string>();
+    const sanitizedScenarios = scenarios.map((s, idx) => {
+      let finalId = s.id && String(s.id).trim() ? String(s.id).trim() : `scen-${Date.now()}-${idx}`;
+      if (seenScenIds.has(finalId)) {
+        finalId = `${finalId}-${idx}-${Math.random().toString(36).substring(2, 6)}`;
+      }
+      seenScenIds.add(finalId);
+      return {
+        ...s,
+        id: finalId,
+      };
+    });
+
+    const rows = sanitizedScenarios.map(mapScenarioToRow);
     const { error: upsertError } = await client.from('scenarios').upsert(rows);
     if (upsertError) {
-      console.error('Erro ao atualizar cenários:', upsertError);
-      throw new Error(`Falha ao salvar lista de cenários: ${upsertError.message}`);
+      if (upsertError.message?.includes('column') || upsertError.code === '42703' || upsertError.code === 'PGRST204') {
+        console.warn('Tentando fallback de colunas na lista de scenarios:', upsertError.message);
+        // Fallback 1: projects_data & work_centers_data without calendar_data/sector_groups_data
+        const fallbackRows1 = rows.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          description: r.description,
+          is_baseline: r.is_baseline,
+          projects_data: r.projects_data,
+          work_centers_data: r.work_centers_data,
+          updated_at: r.updated_at,
+        }));
+        const { error: err1 } = await client.from('scenarios').upsert(fallbackRows1);
+        if (err1) {
+          // Fallback 2: projects & work_centers
+          const fallbackRows2 = rows.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            is_baseline: r.is_baseline,
+            projects: r.projects_data,
+            work_centers: r.work_centers_data,
+            updated_at: r.updated_at,
+          }));
+          const { error: err2 } = await client.from('scenarios').upsert(fallbackRows2);
+          if (err2) {
+            console.error('Erro ao salvar cenários via fallback no Supabase:', err2);
+            throw new Error(`Falha ao salvar lista de cenários: ${upsertError.message}`);
+          }
+        }
+      } else {
+        console.error('Erro ao atualizar cenários:', upsertError);
+        throw new Error(`Falha ao salvar lista de cenários: ${upsertError.message}`);
+      }
     }
 
-    const currentIds = scenarios.map((s) => s.id);
-    const { error: delError } = await client
-      .from('scenarios')
-      .delete()
-      .not('id', 'in', `(${currentIds.map((id) => `'${id}'`).join(',')})`);
-    if (delError) {
+    try {
+      const { data: existing } = await client.from('scenarios').select('id');
+      if (existing && existing.length > 0) {
+        const keepSet = new Set(sanitizedScenarios.map((s) => s.id));
+        const toDelete = existing.filter((row: any) => !keepSet.has(row.id)).map((row: any) => row.id);
+        if (toDelete.length > 0) {
+          await client.from('scenarios').delete().in('id', toDelete);
+        }
+      }
+    } catch (delError) {
       console.warn('Aviso ao remover cenários excluídos:', delError);
     }
   },
@@ -554,6 +751,20 @@ export const SupabaseService = {
       console.error('Erro ao excluir cenário:', error);
       throw new Error(`Falha ao excluir cenário: ${error.message}`);
     }
+  },
+
+  // --- Limpeza Total do Banco de Dados (Zerar Tudo do Zero) ---
+  async wipeAllDatabaseData(): Promise<void> {
+    const client = getSupabase();
+    await Promise.allSettled([
+      client.from('projects').delete().neq('id', '___none___'),
+      client.from('work_centers').delete().neq('id', '___none___'),
+      client.from('calendar_exceptions').delete().neq('id', '___none___'),
+      client.from('turbine_types').delete().neq('id', '___none___'),
+      client.from('gantt_tasks').delete().neq('id', '___none___'),
+      client.from('scenarios').delete().neq('id', '___none___'),
+      client.from('system_state').delete().neq('key', '___none___'),
+    ]);
   },
 
   // --- Estado Global Compartilhado do Sistema (System State) ---

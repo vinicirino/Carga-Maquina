@@ -41,6 +41,9 @@ import {
   ArrowRight,
   Info,
   Check,
+  FolderPlus,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 interface TurbineTypeManagerModalProps {
@@ -69,8 +72,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
   );
 
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [newSectorNameInput, setNewSectorNameInput] = useState<string>('');
-  const [isAddingNewSector, setIsAddingNewSector] = useState<boolean>(false);
+  const [isIncludeGroupOpen, setIsIncludeGroupOpen] = useState<boolean>(false);
   const [previewSectorFilter, setPreviewSectorFilter] = useState<string>('ALL');
   const [previewTab, setPreviewTab] = useState<'chart' | 'timeline'>('chart');
 
@@ -118,9 +120,21 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     return Array.from(set);
   }, [workCenters, sectorGroups]);
 
+  // Count registered work centers per sector group
+  const workCentersCountPerGroup = useMemo(() => {
+    const counts: Record<string, number> = {};
+    workCenters.forEach((wc) => {
+      const cat = getWorkCenterCategory(wc);
+      if (cat) {
+        counts[cat] = (counts[cat] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [workCenters]);
+
   const currentType = typesList.find((t) => t.id === selectedTypeId) || typesList[0];
 
-  // Helper to ensure currentType has ONLY the known sector groups present in work centers
+  // Helper to ensure currentType has curves for known groups, respecting enabled state
   const enrichedSectorCurves: Record<string, SectorCurveConfig> = useMemo(() => {
     if (!currentType) return {};
     const existingCurves = currentType.sectorCurves || {};
@@ -130,6 +144,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
       if (existingCurves[secName]) {
         curves[secName] = existingCurves[secName];
       } else {
+        // Newly discovered group from work centers: default to disabled so user can explicitly include
         curves[secName] = {
           sectorName: secName,
           percentage: 0,
@@ -137,6 +152,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
           endPct: 90,
           curveShape: 's-curve',
           volumeGain: 1.0,
+          enabled: false,
         };
       }
     });
@@ -144,33 +160,50 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     return curves;
   }, [currentType, allKnownSectorGroups]);
 
+  // Active / Included Sector Groups in current model
+  const activeSectorEntries = useMemo(() => {
+    return Object.entries(enrichedSectorCurves).filter(([_, cfg]) => cfg.enabled !== false);
+  }, [enrichedSectorCurves]);
+
+  // Excluded Sector Groups in current model
+  const excludedSectorGroups = useMemo(() => {
+    return allKnownSectorGroups.filter((secName) => {
+      const cfg = enrichedSectorCurves[secName];
+      return !cfg || cfg.enabled === false;
+    });
+  }, [allKnownSectorGroups, enrichedSectorCurves]);
+
   // Baseline hours (Meta Padrão Fixa definida pelo usuário, ex: 10.000h)
   const baseTargetHours = currentType?.defaultHoursPerTurbine || 10000;
 
-  // Calculate actual hours for each sector based STRICTLY on the baseTargetHours reference
-  // Sector Hours = baseTargetHours * (percentage / 100) * volumeGain
+  // Sector Hours = baseTargetHours * (percentage / 100) * volumeGain (ONLY for enabled groups)
   const sectorCalculatedHoursMap = useMemo(() => {
     const map: Record<string, number> = {};
 
     Object.entries(enrichedSectorCurves).forEach(([secName, rawCfg]) => {
       const cfg = rawCfg as SectorCurveConfig;
+      if (cfg.enabled === false) {
+        map[secName] = 0;
+        return;
+      }
+      const gain = typeof cfg.volumeGain === 'number' ? cfg.volumeGain : 1.0;
       const hrs = Math.round(
-        (baseTargetHours * (cfg.percentage || 0) * (cfg.volumeGain || 1.0)) / 100
+        (baseTargetHours * (cfg.percentage || 0) * gain) / 100
       );
       map[secName] = hrs;
     });
     return map;
   }, [baseTargetHours, enrichedSectorCurves]);
 
-  // Total sum of hours calculated from all centers
+  // Total sum of hours calculated from all active groups
   const totalCalculatedSectorHours = useMemo(() => {
     return Object.values(sectorCalculatedHoursMap).reduce((acc: number, h: number) => acc + h, 0);
   }, [sectorCalculatedHoursMap]);
 
-  // Calculate total base percentage sum
+  // Calculate total base percentage sum (only from active groups)
   const totalBaseWeightSum = useMemo(() => {
     const sum = Object.values(enrichedSectorCurves).reduce(
-      (acc, curr) => acc + (curr.percentage || 0),
+      (acc, curr) => acc + (curr.enabled !== false ? curr.percentage || 0 : 0),
       0
     );
     return Number(sum.toFixed(1));
@@ -182,9 +215,10 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     (((totalCalculatedSectorHours - baseTargetHours) / (baseTargetHours || 1)) * 100).toFixed(1)
   );
 
-  // Filtered sectors list
+  // Filtered active sectors list for search
   const filteredSectorEntries = useMemo(() => {
-    return Object.entries(enrichedSectorCurves).filter(([secName]) => {
+    return Object.entries(enrichedSectorCurves).filter(([secName, cfg]) => {
+      if (cfg.enabled === false) return false;
       if (!searchTerm.trim()) return true;
       return secName.toLowerCase().includes(searchTerm.toLowerCase());
     });
@@ -196,10 +230,11 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     const totalHours = totalCalculatedSectorHours > 0 ? totalCalculatedSectorHours : baseTargetHours;
     const totalSteps = 24; // 24 timeline intervals (0% to 100%)
 
-    // Sum for normalization across sectors
+    // Sum for normalization across active sectors
     let rawSum = 0;
-    Object.values(enrichedSectorCurves).forEach((cfg) => {
-      rawSum += (cfg.percentage || 0) * (cfg.volumeGain || 1.0);
+    activeSectorEntries.forEach(([_, cfg]) => {
+      const gain = typeof cfg.volumeGain === 'number' ? cfg.volumeGain : 1.0;
+      rawSum += (cfg.percentage || 0) * gain;
     });
     if (rawSum === 0) rawSum = 100;
 
@@ -221,7 +256,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
       const sectorLoads: Record<string, number> = {};
       let stepTotalLoad = 0;
 
-      Object.entries(enrichedSectorCurves).forEach(([secName, curveCfg]) => {
+      activeSectorEntries.forEach(([secName, curveCfg]) => {
         if (previewSectorFilter !== 'ALL' && previewSectorFilter !== secName) {
           return;
         }
@@ -272,7 +307,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     });
 
     return points;
-  }, [currentType, totalCalculatedSectorHours, baseTargetHours, enrichedSectorCurves, previewSectorFilter, sectorCalculatedHoursMap]);
+  }, [currentType, totalCalculatedSectorHours, baseTargetHours, activeSectorEntries, previewSectorFilter, sectorCalculatedHoursMap]);
 
   if (!isOpen) return null;
 
@@ -305,6 +340,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
       [sectorName]: {
         ...cfg,
         percentage: Math.min(200, Math.max(0, newPct)),
+        enabled: true,
       },
     };
 
@@ -321,7 +357,10 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     const mergedCurves: Record<string, SectorCurveConfig> = {
       ...enrichedSectorCurves,
       ...currentType.sectorCurves,
-      [sectorName]: config,
+      [sectorName]: {
+        ...config,
+        enabled: true,
+      },
     };
 
     handleUpdateCurrentType({
@@ -330,51 +369,77 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     });
   };
 
-  const handleAddNewSectorGroup = () => {
-    if (!newSectorNameInput.trim()) return;
-    const secName = newSectorNameInput.trim().toUpperCase();
-
-    const updatedCurves = {
-      ...enrichedSectorCurves,
+  // Exclude a work group from this model
+  const handleExcludeSectorGroup = (secName: string) => {
+    if (!currentType) return;
+    const existing = enrichedSectorCurves[secName];
+    const newCurves = {
+      ...currentType.sectorCurves,
       [secName]: {
-        sectorName: secName,
-        percentage: 5,
-        startPct: 10,
-        endPct: 80,
-        curveShape: 's-curve' as const,
-        volumeGain: 1.0,
+        ...(existing || {
+          sectorName: secName,
+          startPct: 10,
+          endPct: 80,
+          curveShape: 's-curve' as const,
+          volumeGain: 1.0,
+        }),
+        enabled: false,
+        percentage: 0,
       },
     };
-
     handleUpdateCurrentType({
       ...currentType,
-      sectorCurves: updatedCurves,
+      sectorCurves: newCurves,
     });
+  };
 
-    setNewSectorNameInput('');
-    setIsAddingNewSector(false);
+  // Include a work group into this model
+  const handleIncludeSectorGroup = (secName: string) => {
+    if (!currentType) return;
+    const existing = currentType.sectorCurves?.[secName] || enrichedSectorCurves[secName];
+    const newCurves = {
+      ...currentType.sectorCurves,
+      [secName]: {
+        ...(existing || {
+          sectorName: secName,
+          startPct: 10,
+          endPct: 80,
+          curveShape: 's-curve' as const,
+          volumeGain: 1.0,
+        }),
+        enabled: true,
+        percentage: existing?.percentage && existing.percentage > 0 ? existing.percentage : 10,
+      },
+    };
+    handleUpdateCurrentType({
+      ...currentType,
+      sectorCurves: newCurves,
+    });
+    setIsIncludeGroupOpen(false);
   };
 
   const handleDistributeEqually = () => {
     if (!currentType) return;
-    const entries = Object.entries(enrichedSectorCurves);
+    const entries = activeSectorEntries;
     const count = entries.length;
     if (count === 0) return;
 
     const equalPct = Number((100 / count).toFixed(1));
-    const normalizedCurves: Record<string, SectorCurveConfig> = {};
+    const normalizedCurves: Record<string, SectorCurveConfig> = { ...currentType.sectorCurves };
     let runningSum = 0;
 
     entries.forEach(([secName, c], idx) => {
       if (idx === entries.length - 1) {
         normalizedCurves[secName] = {
           ...c,
+          enabled: true,
           percentage: Number(Math.max(0, 100 - runningSum).toFixed(1)),
         };
       } else {
         runningSum += equalPct;
         normalizedCurves[secName] = {
           ...c,
+          enabled: true,
           percentage: equalPct,
         };
       }
@@ -388,11 +453,11 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
 
   const handleNormalizeWeightsTo100 = () => {
     if (!currentType) return;
-    const entries = Object.entries(enrichedSectorCurves);
+    const entries = activeSectorEntries;
     const effectiveWeights = entries.map(([secName, c]) => ({
       secName,
       config: c,
-      effectiveWeight: (c.percentage || 0) * (c.volumeGain || 1.0),
+      effectiveWeight: (c.percentage || 0) * (typeof c.volumeGain === 'number' ? c.volumeGain : 1.0),
     }));
     const sum = effectiveWeights.reduce((acc, curr) => acc + curr.effectiveWeight, 0);
 
@@ -401,7 +466,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
       return;
     }
 
-    const normalizedCurves: Record<string, SectorCurveConfig> = {};
+    const normalizedCurves: Record<string, SectorCurveConfig> = { ...currentType.sectorCurves };
     let runningSum = 0;
     const nonZeroEntries = effectiveWeights.filter((item) => item.effectiveWeight > 0);
 
@@ -411,12 +476,14 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
         runningSum += scaled;
         normalizedCurves[secName] = {
           ...config,
+          enabled: true,
           percentage: scaled,
           volumeGain: 1.0,
         };
       } else {
         normalizedCurves[secName] = {
           ...config,
+          enabled: true,
           percentage: 0,
           volumeGain: 1.0,
         };
@@ -509,22 +576,15 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
 
   // Primary Save Action with Validation Alert Dialog
   const handleInitiateSave = () => {
-    // Check if any model in the list has missing/invalid essential fields
     for (const t of typesList) {
-      if (!t.name.trim()) {
-        return;
-      }
-      if (!t.defaultDurationDays || t.defaultDurationDays <= 0) {
-        return;
-      }
-      if (!t.defaultHoursPerTurbine || t.defaultHoursPerTurbine <= 0) {
-        return;
-      }
+      if (!t.name.trim()) return;
+      if (!t.defaultDurationDays || t.defaultDurationDays <= 0) return;
+      if (!t.defaultHoursPerTurbine || t.defaultHoursPerTurbine <= 0) return;
     }
 
     // Check if total weights differ from 100% or total calculated hours differ from baseTargetHours
-    const effectiveWeightSum = Object.values(enrichedSectorCurves).reduce(
-      (acc, c) => acc + (c.percentage || 0) * (c.volumeGain || 1.0),
+    const effectiveWeightSum = activeSectorEntries.reduce(
+      (acc, [_, c]) => acc + (c.percentage || 0) * (typeof c.volumeGain === 'number' ? c.volumeGain : 1.0),
       0
     );
     const roundedEffectiveWeightSum = Number(effectiveWeightSum.toFixed(1));
@@ -543,23 +603,21 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
       return;
     }
 
-    // Exact 100%, save directly
     onSaveTurbineTypes(typesList);
     onClose();
   };
 
-  // Save with updated base hours AND recalculate all sector base weights & load volumes to strictly 100%
+  // Save with updated base hours AND recalculate all active sector base weights & load volumes to strictly 100%
   const handleConfirmSaveWithUpdatedBase = () => {
     if (!currentType || !confirmationDialog) return;
     const newBase = confirmationDialog.calculatedTotal > 0 ? confirmationDialog.calculatedTotal : baseTargetHours;
 
-    const newCurves: Record<string, SectorCurveConfig> = {};
-    const entries = Object.entries(enrichedSectorCurves);
+    const newCurves: Record<string, SectorCurveConfig> = { ...currentType.sectorCurves };
     let runningPctSum = 0;
 
-    const activeEntries = entries.filter(([name]) => (sectorCalculatedHoursMap[name] || 0) > 0);
+    const activeEntries = activeSectorEntries.filter(([name]) => (sectorCalculatedHoursMap[name] || 0) > 0);
 
-    entries.forEach(([secName, cfg]) => {
+    activeSectorEntries.forEach(([secName, cfg]) => {
       const secHours = sectorCalculatedHoursMap[secName] || 0;
       if (newBase > 0 && secHours > 0) {
         const rawPct = (secHours / newBase) * 100;
@@ -567,12 +625,14 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
         runningPctSum += roundedPct;
         newCurves[secName] = {
           ...cfg,
+          enabled: true,
           percentage: roundedPct,
-          volumeGain: 1.0, // Volume de carga normalizado em 1.0 (100%)
+          volumeGain: 1.0,
         };
       } else {
         newCurves[secName] = {
           ...cfg,
+          enabled: true,
           percentage: 0,
           volumeGain: 1.0,
         };
@@ -613,18 +673,17 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
     onClose();
   };
 
-  // Save keeping original base hours AND normalize sector base weights to strictly 100%
+  // Save keeping original base hours AND normalize active sector base weights to strictly 100%
   const handleConfirmSaveKeepOriginalBase = () => {
     if (!currentType || !confirmationDialog) return;
     const keepBase = confirmationDialog.baseTotal > 0 ? confirmationDialog.baseTotal : 10000;
 
-    const newCurves: Record<string, SectorCurveConfig> = {};
-    const entries = Object.entries(enrichedSectorCurves);
+    const newCurves: Record<string, SectorCurveConfig> = { ...currentType.sectorCurves };
     let runningPctSum = 0;
     const totalCalcHours = totalCalculatedSectorHours > 0 ? totalCalculatedSectorHours : keepBase;
-    const activeEntries = entries.filter(([name]) => (sectorCalculatedHoursMap[name] || 0) > 0);
+    const activeEntries = activeSectorEntries.filter(([name]) => (sectorCalculatedHoursMap[name] || 0) > 0);
 
-    entries.forEach(([secName, cfg]) => {
+    activeSectorEntries.forEach(([secName, cfg]) => {
       const secHours = sectorCalculatedHoursMap[secName] || 0;
       if (totalCalcHours > 0 && secHours > 0) {
         const rawPct = (secHours / totalCalcHours) * 100;
@@ -632,12 +691,14 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
         runningPctSum += roundedPct;
         newCurves[secName] = {
           ...cfg,
+          enabled: true,
           percentage: roundedPct,
-          volumeGain: 1.0, // Volume de carga normalizado em 1.0 (100%)
+          volumeGain: 1.0,
         };
       } else {
         newCurves[secName] = {
           ...cfg,
+          enabled: true,
           percentage: 0,
           volumeGain: 1.0,
         };
@@ -695,7 +756,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                 </span>
               </h3>
               <p className="text-[11px] text-slate-500">
-                Parametrize a posição inicial no cronograma, a dispersão/duração de cada setor e visualize a Curva S acumulada e o histograma de esforço em tempo real.
+                Parametrize a posição inicial no cronograma, a dispersão/duração de cada grupo de trabalho e visualize a Curva S acumulada e o histograma de esforço em tempo real.
               </p>
             </div>
           </div>
@@ -710,7 +771,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
 
         {/* Modal Body: Sidebar (Blue/Navy) + Main Content (Light Theme) */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
-          {/* Sidebar: Turbine / S-Curve Models List (Preserved in rich blue/navy theme) */}
+          {/* Sidebar: Turbine / S-Curve Models List */}
           <div className="w-full md:w-56 bg-slate-900 border-b md:border-b-0 md:border-r border-slate-800 p-3 flex flex-col justify-between overflow-y-auto shrink-0">
             <div className="space-y-2">
               <div className="flex items-center justify-between pb-2 border-b border-slate-800">
@@ -846,7 +907,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                         )}
                       </div>
 
-                      {/* Total Calculado dos Setores */}
+                      {/* Total Calculado dos Setores Ativos */}
                       <div
                         className={`p-2.5 rounded-lg border ${
                           Math.abs(hoursDifference) < 5
@@ -988,9 +1049,9 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                         className="bg-transparent text-xs font-bold text-indigo-700 focus:outline-none cursor-pointer text-right"
                       >
                         <option value="ALL" className="bg-white text-slate-900">
-                          Todos os Setores (Curva Global)
+                          Todos os Setores Ativos ({activeSectorEntries.length})
                         </option>
-                        {Object.keys(enrichedSectorCurves).map((sec) => (
+                        {activeSectorEntries.map(([sec]) => (
                           <option key={sec} value={sec} className="bg-white text-slate-900">
                             Setor: {sec}
                           </option>
@@ -1080,7 +1141,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                     {/* Timeline Gantt Tab */}
                     {previewTab === 'timeline' && (
                       <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                        {Object.entries(enrichedSectorCurves)
+                        {activeSectorEntries
                           .filter(([_, cfg]) => (cfg.percentage || 0) > 0)
                           .map(([secName, cfg]) => {
                             const dur = Math.max(1, cfg.endPct - cfg.startPct);
@@ -1132,7 +1193,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                 </div>
 
                 <div className="text-[10px] text-slate-500 font-medium italic">
-                  * Os pesos de cada setor são calculados sobre a Meta Base de {(baseTargetHours ?? 0).toLocaleString()}h.
+                  * Os pesos de cada grupo são calculados sobre a Meta Base de {(baseTargetHours ?? 0).toLocaleString()}h.
                 </div>
               </div>
 
@@ -1146,10 +1207,10 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                     <div>
                       <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                         <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Parametrização por Setor ({filteredSectorEntries.length} Grupos dos Centros de Trabalho)</span>
+                        <span>Parametrização por Grupos de Trabalho ({activeSectorEntries.length} Ativos de {allKnownSectorGroups.length})</span>
                       </h4>
                       <p className="text-[10px] text-slate-500 mt-0.5">
-                        Agrupadores sincronizados com o cadastro de centros de trabalho. Defina <strong>Início</strong> e <strong>Duração</strong> para cada grupo.
+                        Exclua ou inclua grupos de trabalho e centros conforme a necessidade deste tipo de projeto.
                       </p>
                     </div>
 
@@ -1170,66 +1231,95 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                         type="button"
                         onClick={handleDistributeEqually}
                         className="px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer shadow-2xs transition-colors border border-slate-300"
-                        title="Distribuir pesos igualmente entre todos os grupos"
+                        title="Distribuir pesos igualmente entre todos os grupos ativos"
                       >
                         <Layers className="w-3 h-3 text-slate-500" />
                         <span>Igualar</span>
                       </button>
 
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingNewSector(!isAddingNewSector)}
-                        className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>+ Agrupador</span>
-                      </button>
+                      {/* Include Work Group Dropdown / Action */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setIsIncludeGroupOpen((prev) => !prev)}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                          title="Incluir grupos de trabalho da base neste modelo de Curva S"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>Incluir Grupo</span>
+                          <ChevronDown className="w-3 h-3 ml-0.5" />
+                        </button>
+
+                        {/* Dropdown Menu of Available/Excluded Groups */}
+                        {isIncludeGroupOpen && (
+                          <div className="absolute right-0 mt-1 w-64 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-20 animate-in fade-in zoom-in-95 duration-150">
+                            <div className="px-3 py-1 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                              Grupos Disponíveis na Base
+                            </div>
+
+                            {excludedSectorGroups.length === 0 ? (
+                              <div className="px-3 py-2 text-xs text-slate-500 italic">
+                                Todos os grupos existentes na base já estão incluídos neste modelo.
+                              </div>
+                            ) : (
+                              <div className="max-h-48 overflow-y-auto py-1">
+                                {excludedSectorGroups.map((secName) => {
+                                  const col = sectorColors[secName] || '#6366f1';
+                                  const count = workCentersCountPerGroup[secName] || 0;
+                                  return (
+                                    <button
+                                      key={secName}
+                                      type="button"
+                                      onClick={() => handleIncludeSectorGroup(secName)}
+                                      className="w-full px-3 py-1.5 text-left text-xs font-bold text-slate-800 hover:bg-indigo-50 hover:text-indigo-900 flex items-center justify-between cursor-pointer transition-colors"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <span
+                                          className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                                          style={{ backgroundColor: col }}
+                                        />
+                                        <span>{secName}</span>
+                                      </div>
+                                      <span className="text-[10px] text-slate-400 font-normal">
+                                        {count} centro(s)
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <div className="px-3 pt-1.5 border-t border-slate-100">
+                              <button
+                                type="button"
+                                onClick={() => setIsIncludeGroupOpen(false)}
+                                className="w-full text-center py-1 text-[10px] text-slate-500 hover:text-slate-800 font-semibold cursor-pointer"
+                              >
+                                Fechar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Add New Sector Bar */}
-                  {isAddingNewSector && (
-                    <div className="bg-indigo-50 border border-indigo-200 p-2.5 rounded-lg flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={newSectorNameInput}
-                        onChange={(e) => setNewSectorNameInput(e.target.value)}
-                        placeholder="Nome do Novo Agrupador (ex: PINTURA, TESTES, MONTAGEM)"
-                        className="flex-1 bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-900 uppercase focus:border-indigo-500 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleAddNewSectorGroup}
-                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg cursor-pointer"
-                      >
-                        Adicionar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingNewSector(false)}
-                        className="px-2 py-1 text-slate-500 hover:text-slate-800 text-xs cursor-pointer"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  )}
-
                   {/* Search Bar */}
-                  {Object.keys(enrichedSectorCurves).length > 3 && (
+                  {activeSectorEntries.length > 3 && (
                     <div className="relative">
                       <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-2" />
                       <input
                         type="text"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Filtrar agrupador (Corte, Solda, Usinagem...)"
+                        placeholder="Filtrar grupos ativos (Corte, Solda, Usinagem...)"
                         className="w-full bg-white border border-slate-300 rounded-lg pl-7 pr-2.5 py-1 text-xs text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none"
                       />
                     </div>
                   )}
                 </div>
 
-                {/* Sector Cards Grid */}
+                {/* Active Sector Cards Grid */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 pb-2">
                   {filteredSectorEntries.map(([secName, rawCfg]) => {
                     const curveCfg = rawCfg as SectorCurveConfig;
@@ -1246,15 +1336,71 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                           workCenters={workCenters}
                           onUpdateConfig={(updated) => handleSectorCurveChange(secName, updated)}
                           onUpdateHours={(newHrs) => handleSectorHoursChange(secName, newHrs)}
+                          onExcludeSector={() => handleExcludeSectorGroup(secName)}
                         />
                       </div>
                     );
                   })}
                 </div>
 
-                {filteredSectorEntries.length === 0 && (
-                  <div className="text-center py-6 text-slate-500 text-xs italic">
-                    Nenhum agrupador encontrado com o termo "{searchTerm}".
+                {/* Warning if no active groups */}
+                {activeSectorEntries.length === 0 && (
+                  <div className="text-center py-8 bg-white rounded-xl border border-slate-200 p-6 space-y-3">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <h5 className="text-sm font-bold text-slate-900">Nenhum grupo de trabalho ativo neste modelo</h5>
+                      <p className="text-xs text-slate-500">
+                        Nem todos os tipos de projeto usam todos os grupos. Inclua abaixo os grupos de trabalho necessários para este modelo.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Section for Excluded Groups in Base (Available to be Re-included) */}
+                {excludedSectorGroups.length > 0 && (
+                  <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                      <span className="flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Grupos Excluídos / Não Utilizados neste Modelo ({excludedSectorGroups.length}):</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        Clique para incluir no modelo
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {excludedSectorGroups.map((secName) => {
+                        const col = sectorColors[secName] || '#6366f1';
+                        const count = workCentersCountPerGroup[secName] || 0;
+                        return (
+                          <div
+                            key={secName}
+                            className="bg-slate-50 border border-slate-200 hover:border-indigo-300 rounded-lg px-2.5 py-1.5 flex items-center gap-2 text-xs transition-colors"
+                          >
+                            <span
+                              className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                              style={{ backgroundColor: col }}
+                            />
+                            <span className="font-bold text-slate-700">{secName}</span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              ({count} centros)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleIncludeSectorGroup(secName)}
+                              className="ml-1 inline-flex items-center gap-0.5 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white rounded text-[10px] font-bold cursor-pointer transition-colors"
+                              title={`Incluir grupo ${secName} neste modelo de Curva S`}
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Incluir</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1312,7 +1458,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                     : 'Atenção: Pesos Abaixo de 100%'}
                 </h4>
                 <p className="text-xs text-slate-500">
-                  A soma dos pesos base está em <strong>{confirmationDialog.weightSum}%</strong>.
+                  A soma dos pesos base dos grupos ativos está em <strong>{confirmationDialog.weightSum}%</strong>.
                 </p>
               </div>
             </div>
@@ -1325,7 +1471,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
                 </span>
               </div>
               <div className="flex justify-between text-slate-600">
-                <span>Total Calculado dos Setores:</span>
+                <span>Total Calculado dos Grupos:</span>
                 <span
                   className={`font-black ${
                     confirmationDialog.weightSum > 100 ? 'text-amber-700' : 'text-blue-700'
@@ -1362,7 +1508,7 @@ export const TurbineTypeManagerModal: React.FC<TurbineTypeManagerModalProps> = (
             </p>
 
             <div className="bg-indigo-50/70 p-2.5 rounded-lg border border-indigo-100 text-[11px] text-indigo-900 leading-relaxed">
-              💡 <strong>Ajuste Automático:</strong> Ao selecionar qualquer uma das opções, o sistema recalculará os <strong>pesos base (%)</strong> e os <strong>volumes de carga</strong> de cada agrupador/setor, ajustando o somatório total para <strong>exatamente 100%</strong>.
+              💡 <strong>Ajuste Automático:</strong> Ao selecionar qualquer uma das opções, o sistema recalculará os <strong>pesos base (%)</strong> e os <strong>volumes de carga</strong> de cada grupo de trabalho ativo, ajustando o somatório total para <strong>exatamente 100%</strong>.
             </div>
 
             <div className="flex flex-col gap-2 pt-2">

@@ -158,6 +158,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
               value={endDate}
               onChange={(val) => handleEndDateChange(val)}
               required
+              align="right"
             />
           </div>
 
@@ -192,6 +193,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                         value={gData?.startDate || ''}
                         onChange={(val) => handleGroupDateChange(groupName, 'startDate', val)}
                         placeholder="Início..."
+                        align="auto"
                       />
                       <DatePickerField
                         label="Término"
@@ -201,6 +203,7 @@ export const ProjectEditorModal: React.FC<ProjectEditorModalProps> = ({
                         value={gData?.endDate || ''}
                         onChange={(val) => handleGroupDateChange(groupName, 'endDate', val)}
                         placeholder="Término..."
+                        align="right"
                       />
                     </div>
                   </div>

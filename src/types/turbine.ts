@@ -8,6 +8,8 @@ export interface SectorCurveConfig {
   curveShape: CurveShape;
   volumeGain: number; // 0.5 to 2.0 (volume dial / multiplier)
   customWorkCenterShares?: Record<string, number>; // wcId -> percentage within sector
+  excludedWorkCenterIds?: string[]; // wcIds explicitly excluded from this sector in this model
+  enabled?: boolean; // whether this sector group is included in this model (default true)
 }
 
 export interface TurbineType {

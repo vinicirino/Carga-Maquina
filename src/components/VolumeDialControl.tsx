@@ -18,6 +18,8 @@ import {
   RotateCcw,
   Scale,
   Zap,
+  Trash2,
+  Check,
 } from 'lucide-react';
 import { SectorCurveConfig, CurveShape } from '../types/turbine';
 import { WorkCenter } from '../types';
@@ -33,6 +35,7 @@ interface VolumeDialControlProps {
   customWorkCenterHours?: Record<string, number>;
   onUpdateConfig: (updated: SectorCurveConfig) => void;
   onUpdateHours?: (newHours: number) => void;
+  onExcludeSector?: () => void;
 }
 
 export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
@@ -45,14 +48,16 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
   customWorkCenterHours,
   onUpdateConfig,
   onUpdateHours,
+  onExcludeSector,
 }) => {
-  const { percentage, startPct, endPct, curveShape, volumeGain = 1.0 } = config;
+  const { percentage, startPct, endPct, curveShape } = config;
+  const volumeGain = typeof config.volumeGain === 'number' ? config.volumeGain : 1.0;
   const [showWcDistribution, setShowWcDistribution] = useState<boolean>(false);
 
   // Derive duration / dispersion percentage: how much it spreads along the timeline
   const durationPct = Math.max(1, endPct - startPct);
 
-  // Filter work centers that belong to this sector category
+  // All work centers belonging to this sector category in the base
   const sectorWorkCenters = useMemo(() => {
     if (!workCenters || workCenters.length === 0) return [];
     return workCenters.filter((wc) => {
@@ -61,17 +66,32 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     });
   }, [workCenters, sectorName]);
 
-  // Current custom shares or default equal shares (integers summing to 100%)
+  // Set of explicitly excluded work centers for this sector in this model
+  const excludedIdsSet = useMemo(() => {
+    return new Set<string>(config.excludedWorkCenterIds || []);
+  }, [config.excludedWorkCenterIds]);
+
+  // Active (included) work centers for this sector
+  const activeWorkCenters = useMemo(() => {
+    return sectorWorkCenters.filter((wc) => !excludedIdsSet.has(wc.id));
+  }, [sectorWorkCenters, excludedIdsSet]);
+
+  // Excluded work centers for this sector
+  const excludedWorkCenters = useMemo(() => {
+    return sectorWorkCenters.filter((wc) => excludedIdsSet.has(wc.id));
+  }, [sectorWorkCenters, excludedIdsSet]);
+
+  // Current custom shares or default equal shares (integers summing to 100%) for ACTIVE centers
   const wcShares = useMemo(() => {
     const shares: Record<string, number> = {};
-    const n = sectorWorkCenters.length;
+    const n = activeWorkCenters.length;
     if (n === 0) return shares;
 
     const custom = config.customWorkCenterShares;
     const hasCustom = custom && Object.keys(custom).length > 0;
 
     if (hasCustom) {
-      sectorWorkCenters.forEach((wc) => {
+      activeWorkCenters.forEach((wc) => {
         const raw = custom[wc.id] ?? custom[wc.name];
         shares[wc.id] = typeof raw === 'number' ? Math.round(raw) : 0;
       });
@@ -79,13 +99,13 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
       // Default integer equal shares strictly summing to 100%
       const baseShare = Math.floor(100 / n);
       const remainder = 100 % n;
-      sectorWorkCenters.forEach((wc, i) => {
+      activeWorkCenters.forEach((wc, i) => {
         shares[wc.id] = baseShare + (i < remainder ? 1 : 0);
       });
     }
 
     return shares;
-  }, [sectorWorkCenters, config.customWorkCenterShares]);
+  }, [activeWorkCenters, config.customWorkCenterShares]);
 
   const totalWcShareSum = useMemo(() => {
     const vals = Object.values(wcShares);
@@ -115,9 +135,10 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     });
   };
 
-  // Change Volume Gain (multiplier: 0.1 to 3.0)
+  // Change Volume Gain (multiplier: 0.0 to 3.0, allowing 0%)
   const handleVolumeGainChange = (newVal: number) => {
-    const clamped = Math.max(0.1, Math.min(3.0, Number(newVal.toFixed(2))));
+    const safeVal = isNaN(newVal) ? 0 : newVal;
+    const clamped = Math.max(0, Math.min(3.0, Number(safeVal.toFixed(2))));
     onUpdateConfig({
       ...config,
       volumeGain: clamped,
@@ -176,13 +197,74 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
     });
   };
 
+  // Exclude work center from this model
+  const handleExcludeWorkCenter = (wcId: string) => {
+    const currentExcluded = config.excludedWorkCenterIds || [];
+    if (currentExcluded.includes(wcId)) return;
+    const newExcluded = [...currentExcluded, wcId];
+
+    const remainingActive = sectorWorkCenters.filter((wc) => !newExcluded.includes(wc.id));
+    const newShares: Record<string, number> = {};
+    if (remainingActive.length > 0) {
+      const baseShare = Math.floor(100 / remainingActive.length);
+      const remainder = 100 % remainingActive.length;
+      remainingActive.forEach((wc, i) => {
+        newShares[wc.id] = baseShare + (i < remainder ? 1 : 0);
+      });
+    }
+
+    onUpdateConfig({
+      ...config,
+      excludedWorkCenterIds: newExcluded,
+      customWorkCenterShares: newShares,
+    });
+  };
+
+  // Include work center back into this model
+  const handleIncludeWorkCenter = (wcId: string) => {
+    const newExcluded = (config.excludedWorkCenterIds || []).filter((id) => id !== wcId);
+    const newActive = sectorWorkCenters.filter((wc) => !newExcluded.includes(wc.id));
+
+    const newShares: Record<string, number> = {};
+    if (newActive.length > 0) {
+      const baseShare = Math.floor(100 / newActive.length);
+      const remainder = 100 % newActive.length;
+      newActive.forEach((wc, i) => {
+        newShares[wc.id] = baseShare + (i < remainder ? 1 : 0);
+      });
+    }
+
+    onUpdateConfig({
+      ...config,
+      excludedWorkCenterIds: newExcluded,
+      customWorkCenterShares: newShares,
+    });
+  };
+
+  // Re-include all work centers of this sector
+  const handleIncludeAllWorkCenters = () => {
+    const newShares: Record<string, number> = {};
+    if (sectorWorkCenters.length > 0) {
+      const baseShare = Math.floor(100 / sectorWorkCenters.length);
+      const remainder = 100 % sectorWorkCenters.length;
+      sectorWorkCenters.forEach((wc, i) => {
+        newShares[wc.id] = baseShare + (i < remainder ? 1 : 0);
+      });
+    }
+    onUpdateConfig({
+      ...config,
+      excludedWorkCenterIds: [],
+      customWorkCenterShares: newShares,
+    });
+  };
+
   const handleDistributeEqually = () => {
-    const n = sectorWorkCenters.length;
+    const n = activeWorkCenters.length;
     if (n === 0) return;
     const baseShare = Math.floor(100 / n);
     const remainder = 100 % n;
     const updated: Record<string, number> = {};
-    sectorWorkCenters.forEach((wc, i) => {
+    activeWorkCenters.forEach((wc, i) => {
       updated[wc.id] = baseShare + (i < remainder ? 1 : 0);
     });
     onUpdateConfig({
@@ -192,13 +274,13 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
   };
 
   const handleDistributeByCapacity = () => {
-    const totalCap = sectorWorkCenters.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0);
+    const totalCap = activeWorkCenters.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0);
     if (totalCap === 0) {
       handleDistributeEqually();
       return;
     }
     // Largest Remainder Method (Hare-Niemeyer) for exact 100% integer sum
-    const items = sectorWorkCenters.map((wc) => {
+    const items = activeWorkCenters.map((wc) => {
       const cap = calculateWeeklyCapacity(wc);
       const exact = (cap / totalCap) * 100;
       const floor = Math.floor(exact);
@@ -233,9 +315,9 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
       return;
     }
     const factor = 100 / totalWcShareSum;
-    
+
     // Largest Remainder Method to get exact integers summing to 100%
-    const items = sectorWorkCenters.map((wc) => {
+    const items = activeWorkCenters.map((wc) => {
       const current = wcShares[wc.id] || 0;
       const exact = current * factor;
       const floor = Math.floor(exact);
@@ -291,13 +373,18 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
             className="w-3 h-3 rounded-full shrink-0 shadow-xs"
             style={{ backgroundColor: color }}
           ></div>
-          <span className="font-black text-xs text-slate-900 uppercase tracking-wider truncate" title={sectorName}>
-            {sectorName}
-          </span>
+          <div className="min-w-0">
+            <span className="font-black text-xs text-slate-900 uppercase tracking-wider truncate block" title={sectorName}>
+              {sectorName}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold block">
+              {activeWorkCenters.length} de {sectorWorkCenters.length} centros no modelo
+            </span>
+          </div>
         </div>
 
-        {/* Right: Hours Badge (Display Only) + Effective % + Centros Button */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right: Hours Badge (Display Only) + Effective % + Centros Button + Exclude Sector Button */}
+        <div className="flex items-center gap-1.5 shrink-0">
           {/* Read-Only Hours Display */}
           <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
             <span className="font-black text-xs text-emerald-700">
@@ -310,22 +397,27 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
             ({effectivePct}%)
           </span>
 
-          {/* Centros Button (Placed after hours per center) */}
+          {/* Centros Button */}
           {sectorWorkCenters.length > 0 && (
             <button
               type="button"
               onClick={() => setShowWcDistribution((prev) => !prev)}
-              className={`inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+              className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border transition-all cursor-pointer ${
                 showWcDistribution
                   ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                  : excludedWorkCenters.length > 0
+                  ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
                   : hasCustomWcShares
-                  ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                  ? 'bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100'
                   : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
               }`}
-              title="Clique para configurar a porcentagem de cada centro de trabalho deste setor"
+              title="Configurar inclusão/exclusão e divisão de carga entre os centros de trabalho"
             >
               <Users className="w-3 h-3" />
-              <span>{sectorWorkCenters.length} centros</span>
+              <span>
+                {activeWorkCenters.length} centros
+                {excludedWorkCenters.length > 0 && ` (${excludedWorkCenters.length} excl.)`}
+              </span>
               {showWcDistribution ? (
                 <ChevronUp className="w-3 h-3 ml-0.5" />
               ) : (
@@ -333,21 +425,33 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
               )}
             </button>
           )}
+
+          {/* Exclude Work Group from Model Button */}
+          {onExcludeSector && (
+            <button
+              type="button"
+              onClick={onExcludeSector}
+              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+              title={`Excluir o grupo ${sectorName} deste modelo de projeto`}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
       {/* Expandable Work Center Distribution Drawer */}
       {showWcDistribution && sectorWorkCenters.length > 0 && (
-        <div className="bg-slate-50 p-3 rounded-xl border border-indigo-200 space-y-2.5 animate-in fade-in slide-in-from-top-1 duration-200">
+        <div className="bg-slate-50 p-3 rounded-xl border border-indigo-200 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2">
             <div>
               <div className="flex items-center gap-1.5 text-xs font-black text-indigo-900">
                 <Users className="w-3.5 h-3.5 text-indigo-600" />
-                <span>Distribuição entre Centros ({sectorName})</span>
+                <span>Centros de Trabalho ({sectorName})</span>
               </div>
-              <span className="text-[10px] text-slate-600 font-medium">
-                Carga do setor: <strong className="text-emerald-700">{Math.round(calculatedHours || 0).toLocaleString()}h</strong>
-              </span>
+              <p className="text-[10px] text-slate-500 font-medium">
+                Nem todos os projetos usam todos os centros. Exclua ou inclua centros conforme a necessidade deste modelo:
+              </p>
             </div>
 
             {/* Quick Action Buttons */}
@@ -355,8 +459,9 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
               <button
                 type="button"
                 onClick={handleDistributeEqually}
-                className="inline-flex items-center gap-1 text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-700 px-2 py-1 rounded-md border border-slate-300 cursor-pointer transition-colors shadow-2xs"
-                title="Divide 100% em partes iguais para todos os centros"
+                disabled={activeWorkCenters.length === 0}
+                className="inline-flex items-center gap-1 text-[10px] font-bold bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 px-2 py-1 rounded-md border border-slate-300 cursor-pointer transition-colors shadow-2xs"
+                title="Divide 100% em partes iguais para os centros ativos"
               >
                 <Scale className="w-3 h-3 text-cyan-600" />
                 <span>Dividir Igualmente</span>
@@ -365,100 +470,186 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
               <button
                 type="button"
                 onClick={handleDistributeByCapacity}
-                className="inline-flex items-center gap-1 text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-700 px-2 py-1 rounded-md border border-slate-300 cursor-pointer transition-colors shadow-2xs"
-                title="Distribui proporcionalmente à capacidade semanal de cada centro"
+                disabled={activeWorkCenters.length === 0}
+                className="inline-flex items-center gap-1 text-[10px] font-bold bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 px-2 py-1 rounded-md border border-slate-300 cursor-pointer transition-colors shadow-2xs"
+                title="Distribui proporcionalmente à capacidade dos centros ativos"
               >
                 <Zap className="w-3 h-3 text-amber-600" />
                 <span>Por Capacidade</span>
               </button>
-            </div>
-          </div>
 
-          {/* List of Work Centers with % share sliders & inputs */}
-          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-            {sectorWorkCenters.map((wc) => {
-              const cap = calculateWeeklyCapacity(wc);
-              const share = Math.round(wcShares[wc.id] ?? 0);
-              const directHours = customWorkCenterHours?.[wc.id] ?? customWorkCenterHours?.[wc.name];
-              const allocatedHours =
-                typeof directHours === 'number' && !hasCustomWcShares
-                  ? directHours
-                  : Math.round(calculatedHours * (share / 100));
-
-              return (
-                <div
-                  key={wc.id}
-                  className="bg-white p-2.5 rounded-lg border border-slate-200 flex flex-col gap-1.5 shadow-2xs"
+              {excludedWorkCenters.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleIncludeAllWorkCenters}
+                  className="inline-flex items-center gap-1 text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 px-2 py-1 rounded-md border border-indigo-200 cursor-pointer transition-colors shadow-2xs"
+                  title="Reativar e incluir todos os centros do setor neste modelo"
                 >
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <div className="min-w-0">
-                      <span className="font-black text-slate-900 truncate block" title={wc.name}>
-                        {wc.name}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">
-                        Cap: {cap}h/sem • Alocado: <strong className="text-emerald-700">{(allocatedHours || 0).toLocaleString()}h</strong>
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1 shrink-0">
-                      <div className="flex items-center bg-slate-50 border border-slate-300 rounded px-1.5 py-0.5">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={share}
-                          onChange={(e) => handleWcShareChange(wc.id, parseInt(e.target.value, 10) || 0)}
-                          className="w-11 bg-transparent text-right font-black text-xs text-indigo-700 focus:outline-none"
-                        />
-                        <span className="text-[10px] font-bold text-indigo-700 ml-0.5">%</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Percentage Slider (Integer Step = 1) */}
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={share}
-                      onChange={(e) => handleWcShareChange(wc.id, parseInt(e.target.value, 10) || 0)}
-                      className="w-full accent-indigo-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Sum Validator Badge & Auto-normalize */}
-          <div className="flex items-center justify-between pt-1 border-t border-slate-200 text-[10px]">
-            <div className="flex items-center gap-1.5">
-              {totalWcShareSum === 100 ? (
-                <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
-                  <span>Soma dos centros: 100% ✓</span>
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
-                  <AlertTriangle className="w-3 h-3 text-amber-700" />
-                  <span>Soma atual: {totalWcShareSum}% (deve somar 100%)</span>
-                </span>
+                  <RotateCcw className="w-3 h-3 text-indigo-600" />
+                  <span>Incluir Todos</span>
+                </button>
               )}
             </div>
-
-            {totalWcShareSum !== 100 && (
-              <button
-                type="button"
-                onClick={handleAutoNormalizeWcShares}
-                className="text-xs font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
-              >
-                Ajustar para 100%
-              </button>
-            )}
           </div>
+
+          {/* Active Work Centers List */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-[10px] font-bold text-slate-700 uppercase tracking-wider">
+              <span>Centros Ativos no Modelo ({activeWorkCenters.length}):</span>
+              <span className="text-emerald-700 font-mono">
+                Carga do setor: {Math.round(calculatedHours || 0).toLocaleString()}h
+              </span>
+            </div>
+
+            {activeWorkCenters.length === 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Todos os centros deste setor estão excluídos deste modelo. Reative ao menos um centro abaixo para distribuir a carga.</span>
+              </div>
+            )}
+
+            <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+              {activeWorkCenters.map((wc) => {
+                const cap = calculateWeeklyCapacity(wc);
+                const share = Math.round(wcShares[wc.id] ?? 0);
+                const directHours = customWorkCenterHours?.[wc.id] ?? customWorkCenterHours?.[wc.name];
+                const allocatedHours =
+                  typeof directHours === 'number' && !hasCustomWcShares
+                    ? directHours
+                    : Math.round(calculatedHours * (share / 100));
+
+                return (
+                  <div
+                    key={wc.id}
+                    className="bg-white p-2.5 rounded-lg border border-slate-200 flex flex-col gap-1.5 shadow-2xs hover:border-indigo-300 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                          <span className="font-black text-slate-900 truncate" title={wc.name}>
+                            {wc.name}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-mono ml-3.5">
+                          Cap: {cap}h/sem • Alocado: <strong className="text-emerald-700">{(allocatedHours || 0).toLocaleString()}h</strong>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center bg-slate-50 border border-slate-300 rounded px-1.5 py-0.5">
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={share}
+                            onChange={(e) => handleWcShareChange(wc.id, parseInt(e.target.value, 10) || 0)}
+                            className="w-11 bg-transparent text-right font-black text-xs text-indigo-700 focus:outline-none"
+                          />
+                          <span className="text-[10px] font-bold text-indigo-700 ml-0.5">%</span>
+                        </div>
+
+                        {/* Exclude Work Center Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleExcludeWorkCenter(wc.id)}
+                          className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+                          title={`Excluir ${wc.name} deste modelo de projeto`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Percentage Slider (Integer Step = 1) */}
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={share}
+                        onChange={(e) => handleWcShareChange(wc.id, parseInt(e.target.value, 10) || 0)}
+                        className="w-full accent-indigo-600 cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Excluded Work Centers Section */}
+          {excludedWorkCenters.length > 0 && (
+            <div className="space-y-1.5 pt-2 border-t border-slate-200">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                <span>Centros Excluídos deste Modelo ({excludedWorkCenters.length}):</span>
+                <span className="text-[9px] text-slate-400 font-normal">Não utilizados neste tipo de projeto</span>
+              </div>
+
+              <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                {excludedWorkCenters.map((wc) => {
+                  const cap = calculateWeeklyCapacity(wc);
+                  return (
+                    <div
+                      key={wc.id}
+                      className="bg-slate-100/80 p-2 rounded-lg border border-slate-200 flex items-center justify-between gap-2 text-xs"
+                    >
+                      <div className="min-w-0 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-slate-400 shrink-0"></span>
+                        <span className="font-semibold text-slate-500 truncate line-through">
+                          {wc.name}
+                        </span>
+                        <span className="text-[9px] text-slate-400 font-mono">
+                          (Cap: {cap}h/sem • 0h alocada)
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleIncludeWorkCenter(wc.id)}
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 hover:text-indigo-900 bg-white hover:bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 cursor-pointer transition-colors shadow-2xs shrink-0"
+                        title={`Incluir ${wc.name} novamente neste modelo de projeto`}
+                      >
+                        <Plus className="w-3 h-3 text-indigo-600" />
+                        <span>Incluir no Modelo</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Sum Validator Badge & Auto-normalize */}
+          {activeWorkCenters.length > 0 && (
+            <div className="flex items-center justify-between pt-1 border-t border-slate-200 text-[10px]">
+              <div className="flex items-center gap-1.5">
+                {totalWcShareSum === 100 ? (
+                  <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                    <span>Soma dos centros ativos: 100% ✓</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded">
+                    <AlertTriangle className="w-3 h-3 text-amber-700" />
+                    <span>Soma atual: {totalWcShareSum}% (deve somar 100%)</span>
+                  </span>
+                )}
+              </div>
+
+              {totalWcShareSum !== 100 && (
+                <button
+                  type="button"
+                  onClick={handleAutoNormalizeWcShares}
+                  className="text-xs font-bold text-indigo-700 hover:text-indigo-900 underline cursor-pointer"
+                >
+                  Ajustar para 100%
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -520,17 +711,20 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
               <div className="flex items-center bg-white border border-slate-300 hover:border-indigo-500 focus-within:border-indigo-500 rounded px-1.5 py-0.5">
                 <input
                   type="number"
-                  min={10}
+                  min={0}
                   max={300}
                   step={5}
-                  value={Math.round(volumeGain * 100)}
-                  onChange={(e) => handleVolumeGainChange((parseFloat(e.target.value) || 100) / 100)}
+                  value={Math.round((volumeGain ?? 0) * 100)}
+                  onChange={(e) => {
+                    const parsed = parseFloat(e.target.value);
+                    handleVolumeGainChange(isNaN(parsed) ? 0 : parsed / 100);
+                  }}
                   className="w-12 bg-transparent text-right font-black text-xs text-indigo-700 focus:outline-none"
                 />
                 <span className="text-[11px] font-bold text-indigo-700 ml-0.5">%</span>
               </div>
               <span className="text-[10px] text-slate-500 font-normal">
-                ({volumeGain >= 1 ? `+${Math.round((volumeGain - 1) * 100)}%` : `-${Math.round((1 - volumeGain) * 100)}%`})
+                ({volumeGain === 0 ? '0% carga' : volumeGain >= 1 ? `+${Math.round((volumeGain - 1) * 100)}%` : `-${Math.round((1 - volumeGain) * 100)}%`})
               </span>
             </div>
           </div>
@@ -538,7 +732,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => handleVolumeGainChange(volumeGain - 0.05)}
+              onClick={() => handleVolumeGainChange(Math.max(0, volumeGain - 0.05))}
               className="w-7 h-7 rounded bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 flex items-center justify-center font-black text-xs border border-slate-300 cursor-pointer shrink-0 transition-transform active:scale-95 shadow-2xs"
               title="Diminuir Volume (-5%)"
             >
@@ -547,7 +741,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
 
             <input
               type="range"
-              min={0.1}
+              min={0}
               max={2.5}
               step={0.05}
               value={volumeGain}
@@ -557,7 +751,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
 
             <button
               type="button"
-              onClick={() => handleVolumeGainChange(volumeGain + 0.05)}
+              onClick={() => handleVolumeGainChange(Math.min(3.0, volumeGain + 0.05))}
               className="w-7 h-7 rounded bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white flex items-center justify-center font-black text-xs border border-indigo-600 cursor-pointer shrink-0 transition-transform active:scale-95 shadow-2xs"
               title="Aumentar Volume (+5%)"
             >

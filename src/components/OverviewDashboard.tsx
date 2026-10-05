@@ -308,13 +308,36 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           </div>
         </div>
 
-        {/* Recharts Plant Chart */}
-        <div className="h-72 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={plantWeeklyChartData}
-              margin={{ top: 15, right: 10, left: -15, bottom: 0 }}
-            >
+        {/* Recharts Plant Chart or Clean Empty State */}
+        {activeWorkCenters.length === 0 && activeProjects.length === 0 ? (
+          <div className="h-64 w-full flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-300 p-6 text-center space-y-3">
+            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+              <Factory className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">
+                Sistema Pronto para Cadastros
+              </h3>
+              <p className="text-xs text-slate-500 max-w-md mt-1">
+                A base de dados está limpa e conectada ao Supabase. Comece cadastrando os centros de trabalho e projetos da sua fábrica, ou importe seus dados via Excel / JSON.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => onNavigateToWorkCenters()}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
+              >
+                Cadastrar Centros de Trabalho
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={plantWeeklyChartData}
+                margin={{ top: 15, right: 10, left: -15, bottom: 0 }}
+              >
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis
                 dataKey="weekLabel"
@@ -420,6 +443,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </BarChart>
           </ResponsiveContainer>
         </div>
+      )}
       </div>
 
       {/* 4. Sector Groups Status Grid (Visão Consolidada por Agrupador) */}
@@ -449,7 +473,12 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {sectorSummaries.map((sector) => {
+          {sectorSummaries.length === 0 ? (
+            <div className="col-span-full py-8 text-center text-slate-400 text-xs italic">
+              Nenhum posto de trabalho ou demanda alocada nos setores. Cadastre seus centros de trabalho para visualizar o balanço setorial.
+            </div>
+          ) : (
+            sectorSummaries.map((sector) => {
             const isCritical = sector.status === 'CRITICAL';
             const isWarning = sector.status === 'WARNING';
 
@@ -516,7 +545,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 </button>
               </div>
             );
-          })}
+          }))}
         </div>
       </div>
 

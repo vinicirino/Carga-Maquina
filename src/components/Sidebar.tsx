@@ -354,16 +354,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="grid grid-cols-2 gap-1.5 pt-1">
                 <button
                   onClick={onSaveCurrentScenario}
-                  disabled={!isScenarioModified}
                   className={`col-span-2 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     isScenarioModified
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs'
-                      : 'bg-slate-800 text-slate-500 opacity-60 cursor-not-allowed'
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs ring-1 ring-emerald-400'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
                   }`}
-                  title="Salvar alterações no cenário ativo"
+                  title={isScenarioModified ? "Salvar alterações no cenário ativo" : "Cenário sincronizado (clique para reforçar salvamento na nuvem)"}
                 >
                   <Save className="w-3.5 h-3.5" />
-                  <span>Salvar Cenário</span>
+                  <span>{isScenarioModified ? 'Salvar Cenário *' : 'Salvar Cenário'}</span>
                 </button>
 
                 <button

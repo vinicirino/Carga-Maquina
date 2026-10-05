@@ -115,13 +115,64 @@ export function getProjectTotalHours(project: Project, workCenters?: WorkCenter[
 }
 
 /**
+ * Ensures any date representation (ISO YYYY-MM-DD, ISO timestamp with T, Brazilian DD/MM/YYYY, or Date object)
+ * is safely normalized to strict ISO 'YYYY-MM-DD' format.
+ */
+export function ensureValidIsoDate(dateVal: any, fallback: string = '2027-08-13'): string {
+  if (!dateVal) return fallback;
+  const str = String(dateVal).trim();
+  if (!str) return fallback;
+
+  // 1. Already strict YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+
+  // 2. Brazilian / European format: DD/MM/YYYY or DD-MM-YYYY
+  const ddmmyyyy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (ddmmyyyy) {
+    const day = ddmmyyyy[1].padStart(2, '0');
+    const month = ddmmyyyy[2].padStart(2, '0');
+    const year = ddmmyyyy[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // 3. ISO timestamp format with 'T': e.g., 2027-08-13T00:00:00.000Z
+  if (str.includes('T')) {
+    const datePart = str.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+      return datePart;
+    }
+  }
+
+  // 4. Try native Date constructor
+  try {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // fallback
+  }
+
+  return fallback;
+}
+
+/**
  * Clamps a given date string (YYYY-MM-DD) between minDate and maxDate.
  */
 export function clampDateString(dateStr: string, minDate: string, maxDate: string): string {
   if (!dateStr) return dateStr;
-  if (minDate && dateStr < minDate) return minDate;
-  if (maxDate && dateStr > maxDate) return maxDate;
-  return dateStr;
+  const safeDate = ensureValidIsoDate(dateStr, minDate || '2027-08-13');
+  const safeMin = minDate ? ensureValidIsoDate(minDate, safeDate) : '';
+  const safeMax = maxDate ? ensureValidIsoDate(maxDate, safeDate) : '';
+
+  if (safeMin && safeDate < safeMin) return safeMin;
+  if (safeMax && safeDate > safeMax) return safeMax;
+  return safeDate;
 }
 
 /**
@@ -133,15 +184,18 @@ export function clampDateRangeWithinProject(
   projectStart: string,
   projectEnd: string
 ): { startDate?: string; endDate?: string } {
-  let cleanStart = startDate;
-  let cleanEnd = endDate;
+  const safePStart = ensureValidIsoDate(projectStart, '2027-08-13');
+  const safePEnd = ensureValidIsoDate(projectEnd, safePStart);
+
+  let cleanStart = startDate ? ensureValidIsoDate(startDate, safePStart) : undefined;
+  let cleanEnd = endDate ? ensureValidIsoDate(endDate, cleanStart || safePStart) : undefined;
 
   if (cleanStart) {
-    cleanStart = clampDateString(cleanStart, projectStart, projectEnd);
+    cleanStart = clampDateString(cleanStart, safePStart, safePEnd);
   }
 
   if (cleanEnd) {
-    cleanEnd = clampDateString(cleanEnd, projectStart, projectEnd);
+    cleanEnd = clampDateString(cleanEnd, safePStart, safePEnd);
   }
 
   // Ensure start is not after end if both are present
@@ -160,8 +214,11 @@ export function clampDateRangeWithinProject(
  * guaranteeing none of them fall outside the global project start and end dates.
  */
 export function sanitizeProjectSchedules(project: Project, workCenters?: WorkCenter[]): Project {
-  const pStart = project.startDate;
-  const pEnd = project.endDate < project.startDate ? project.startDate : project.endDate;
+  const pStart = ensureValidIsoDate(project.startDate, '2027-08-13');
+  let pEnd = ensureValidIsoDate(project.endDate, pStart);
+  if (pEnd < pStart) {
+    pEnd = pStart;
+  }
 
   let sanitizedGroupDates: Record<string, { startDate?: string; endDate?: string }> | undefined = undefined;
   if (project.groupDates) {
@@ -187,8 +244,14 @@ export function sanitizeProjectSchedules(project: Project, workCenters?: WorkCen
     }
   }
 
-  const baseProject = {
+  const safeId = project.id && String(project.id).trim()
+    ? String(project.id).trim()
+    : `proj-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+
+  const baseProject: Project = {
     ...project,
+    id: safeId,
+    name: project.name && String(project.name).trim() ? String(project.name).trim().toUpperCase() : 'PROJETO',
     startDate: pStart,
     endDate: pEnd,
     groupDates: sanitizedGroupDates,

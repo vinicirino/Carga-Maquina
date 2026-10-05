@@ -92,17 +92,17 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-bold text-slate-900">
-                  Inicializar Base de Produção da Empresa (0 Projetos)
+                  Iniciar Base Limpa do Zero (0 Projetos e 0 Centros)
                 </h3>
                 <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
-                  Zera todos os projetos de teste/demonstração e prepara o sistema limpo para você cadastrar ou importar os projetos reais da sua empresa via planilha Excel ou JSON.
+                  Zera todos os cadastros e prepara o sistema completamente limpo para você cadastrar ou importar os centros de trabalho e projetos reais da sua empresa do absoluto zero.
                 </p>
               </div>
             </div>
             <div className="flex justify-end">
               {confirmingAction === 'clean_state' ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-indigo-900 font-semibold">Confirmar limpeza de projetos?</span>
+                  <span className="text-xs text-indigo-900 font-semibold">Confirmar início do zero?</span>
                   <button
                     onClick={() => setConfirmingAction(null)}
                     className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-bold cursor-pointer"
@@ -116,7 +116,7 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
                     }}
                     className="px-3 py-1.5 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
                   >
-                    Sim, Inicializar
+                    Sim, Iniciar do Zero
                   </button>
                 </div>
               ) : (
@@ -124,7 +124,7 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
                   onClick={() => setConfirmingAction('clean_state')}
                   className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
                 >
-                  Inicializar Base Limpa (Produção)
+                  Iniciar do Zero
                 </button>
               )}
             </div>

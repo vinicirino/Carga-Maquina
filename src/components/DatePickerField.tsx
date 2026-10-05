@@ -42,6 +42,8 @@ interface DatePickerFieldProps {
   calendarExceptions?: CalendarException[];
   size?: 'sm' | 'md' | 'xs';
   theme?: 'light' | 'dark';
+  align?: 'left' | 'right' | 'auto';
+  placement?: 'bottom' | 'top' | 'auto';
 }
 
 const MONTH_NAMES = [
@@ -75,9 +77,41 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
   calendarExceptions = [],
   size = 'md',
   theme = 'light',
+  align = 'auto',
+  placement = 'auto',
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [popoverCoords, setPopoverCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  const updatePosition = () => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const popoverWidth = 285;
+    const popoverHeight = 330;
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const placeTop =
+      placement === 'top' || (placement === 'auto' && spaceBelow < popoverHeight && spaceAbove > spaceBelow);
+
+    const calculatedTop = placeTop
+      ? Math.max(8, rect.top - popoverHeight - 4)
+      : Math.min(window.innerHeight - popoverHeight - 8, rect.bottom + 4);
+
+    let calculatedLeft = rect.left;
+    if (
+      align === 'right' ||
+      (align === 'auto' && rect.left + popoverWidth > window.innerWidth - 16)
+    ) {
+      calculatedLeft = rect.right - popoverWidth;
+    }
+
+    // Always clamp horizontally to guarantee it is NEVER cut off by screen edges
+    calculatedLeft = Math.max(8, Math.min(calculatedLeft, window.innerWidth - popoverWidth - 8));
+
+    setPopoverCoords({ top: calculatedTop, left: calculatedLeft });
+  };
 
   // Parsed current selected date
   const parsedValue = value ? parseISO(value) : null;
@@ -94,6 +128,26 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
       setCurrentViewDate(validValue);
     }
   }, [value]);
+
+  // Update alignment when opening, resizing or scrolling
+  useEffect(() => {
+    if (!isOpen) return;
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen]);
+
+  const handleToggle = () => {
+    if (disabled) return;
+    if (!isOpen) {
+      updatePosition();
+    }
+    setIsOpen(!isOpen);
+  };
 
   // Close calendar popover on outside click or escape
   useEffect(() => {
@@ -233,7 +287,7 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
 
       {/* Main Trigger Button styled like a high-end calendar input */}
       <div
-        onClick={() => !disabled && setIsOpen(!isOpen)}
+        onClick={handleToggle}
         className={`w-full flex items-center justify-between rounded-lg border transition-all cursor-pointer select-none font-semibold ${sizeClasses} ${
           disabled
             ? 'opacity-50 cursor-not-allowed bg-slate-100 border-slate-300 text-slate-400'
@@ -305,16 +359,21 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
       />
 
       {/* ========================================================================= */}
-      {/* FLOATING CALENDAR POPOVER                                                 */}
+      {/* FLOATING CALENDAR POPOVER (FIXED IN VIEWPORT TO PREVENT CLIPPING)         */}
       {/* ========================================================================= */}
       {isOpen && (
         <div
-          className={`absolute left-0 top-full mt-1.5 z-50 w-72 p-3 rounded-xl border shadow-2xl animate-in fade-in zoom-in-95 duration-100 ${
+          className={`fixed z-[9999] w-72 p-3 rounded-xl border shadow-2xl animate-in fade-in zoom-in-95 duration-100 ${
             isDark
               ? 'bg-slate-900 border-slate-700 text-white'
               : 'bg-white border-slate-200 text-slate-900'
           }`}
-          style={{ minWidth: '280px' }}
+          style={{
+            top: `${popoverCoords.top}px`,
+            left: `${popoverCoords.left}px`,
+            width: '285px',
+            maxWidth: 'calc(100vw - 16px)',
+          }}
         >
           {/* Header Month / Year Navigation */}
           <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-200/80 dark:border-slate-800">

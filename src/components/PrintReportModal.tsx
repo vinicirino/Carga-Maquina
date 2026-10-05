@@ -238,25 +238,50 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
     return recommendations;
   }, [recommendations, selectedWorkCenterObj, selectedSector, filteredWorkCenters]);
 
-  // Chart data for plant or selected sector
+  // Chart data for plant or selected sector broken down by individual project (like in the main dashboard)
   const chartData = useMemo(() => {
-    const weeklyCapacity = filteredWorkCenters.reduce((acc, wc) => acc + calculateWeeklyCapacity(wc), 0);
-
     return filteredWeeklyBuckets.map((bucket) => {
-      let totalLoad = 0;
-      filteredWorkCenters.forEach((wc) => {
-        totalLoad += bucket.workCenterLoads[wc.id] || 0;
-      });
+      let bucketEffectiveCapacity = 0;
+      let bucketNominalCapacity = 0;
+      for (const wc of filteredWorkCenters) {
+        const nominal = calculateWeeklyCapacity(wc);
+        bucketNominalCapacity += nominal;
+        const effective = bucket.workCenterCapacities?.[wc.id] ?? nominal;
+        bucketEffectiveCapacity += effective;
+      }
 
-      return {
+      let totalLoad = 0;
+      const row: Record<string, any> = {
         weekLabel: bucket.label.split(' ')[1] || bucket.label,
         weekKey: bucket.weekKey,
-        load: Math.round(totalLoad),
-        capacity: weeklyCapacity,
-        isOverloaded: totalLoad > weeklyCapacity,
+        capacity: Math.round(bucketEffectiveCapacity),
+        nominalCapacity: Math.round(bucketNominalCapacity),
       };
+
+      for (const proj of activeProjects) {
+        let projTotalHours = 0;
+        for (const wc of filteredWorkCenters) {
+          projTotalHours += bucket.projectBreakdown[wc.id]?.[proj.id] || 0;
+        }
+        row[proj.id] = Math.round(projTotalHours);
+        totalLoad += projTotalHours;
+      }
+
+      row.load = Math.round(totalLoad);
+      row.totalLoad = Math.round(totalLoad);
+      row.isOverloaded = totalLoad > bucketEffectiveCapacity + 0.01;
+
+      return row;
     });
-  }, [filteredWeeklyBuckets, filteredWorkCenters]);
+  }, [filteredWeeklyBuckets, filteredWorkCenters, activeProjects]);
+
+  // List of projects that have load in this chart view (or all active if none)
+  const projectsInChart = useMemo(() => {
+    const withDemand = activeProjects.filter((p) =>
+      chartData.some((d) => (d[p.id] || 0) > 0)
+    );
+    return withDemand.length > 0 ? withDemand : activeProjects;
+  }, [activeProjects, chartData]);
 
   // Sector breakdown calculations
   const sectorList = useMemo(() => {
@@ -1225,23 +1250,80 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                         />
                         <YAxis tick={{ fontSize: 9, fill: '#475569' }} />
                         <Tooltip
-                          formatter={(val: number) => [`${val.toLocaleString('pt-BR')} h`, '']}
-                          labelFormatter={(lbl) => `Semana: ${lbl}`}
-                          contentStyle={{ backgroundColor: '#ffffff', borderColor: '#cbd5e1', fontSize: '11px' }}
-                        />
-                        <Legend verticalAlign="top" height={20} wrapperStyle={{ fontSize: '9px' }} />
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const rowData = payload[0]?.payload;
+                              if (!rowData) return null;
+                              const totalHours = rowData.totalLoad || rowData.load || 0;
+                              const cap = rowData.capacity || 0;
+                              const util = cap > 0 ? ((totalHours / cap) * 100).toFixed(1) : '0';
+                              const isOver = totalHours > cap;
 
-                        <Bar
-                          dataKey="load"
-                          name={selectedWorkCenterObj ? `Carga no Posto (${selectedWorkCenterObj.name})` : 'Carga Demandada (Horas)'}
-                          fill="#4f46e5"
-                          radius={[2, 2, 0, 0]}
-                          isAnimationActive={false}
+                              return (
+                                <div className="bg-slate-900 text-white p-2.5 rounded-lg shadow-xl text-[11px] space-y-1.5 border border-slate-800">
+                                  <div className="font-bold border-b border-slate-800 pb-1 flex justify-between gap-4">
+                                    <span>Semana {label}</span>
+                                    <span className={isOver ? 'text-rose-400 font-bold' : 'text-emerald-400'}>
+                                      {util}% Ocupação
+                                    </span>
+                                  </div>
+                                  <div className="space-y-0.5 text-slate-300 text-[10px]">
+                                    <div className="flex justify-between gap-3">
+                                      <span>Demanda Total:</span>
+                                      <strong className="text-white">{(totalHours || 0).toLocaleString('pt-BR')}h</strong>
+                                    </div>
+                                    <div className="flex justify-between gap-3">
+                                      <span>Capacidade Efetiva:</span>
+                                      <strong className="text-slate-200">{(cap || 0).toLocaleString('pt-BR')}h</strong>
+                                    </div>
+                                    {isOver && (
+                                      <div className="text-rose-300 text-[10px] font-semibold pt-0.5">
+                                        Sobrecarga: +{((totalHours || 0) - (cap || 0)).toLocaleString('pt-BR')}h
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Breakdown per Project with colors */}
+                                  <div className="pt-1 border-t border-slate-800/80 space-y-0.5 text-[10px]">
+                                    {projectsInChart.map((p, idx) => {
+                                      const val = rowData[p.id] || 0;
+                                      if (val <= 0) return null;
+                                      const color = p.color || `hsl(${(idx * 55) % 360}, 70%, 50%)`;
+                                      return (
+                                        <div key={p.id} className="flex justify-between gap-3 items-center text-slate-300">
+                                          <span className="flex items-center gap-1.5 truncate max-w-[150px]">
+                                            <span className="w-2 h-2 rounded-xs shrink-0" style={{ backgroundColor: color }} />
+                                            <span className="truncate">{p.name}:</span>
+                                          </span>
+                                          <span className="font-mono text-white font-semibold">{val.toLocaleString('pt-BR')}h</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
                         />
+                        <Legend verticalAlign="top" height={22} wrapperStyle={{ fontSize: '9px', paddingBottom: '4px' }} />
+
+                        {/* Stacked Project Bars with respective colors like in the main dashboard */}
+                        {projectsInChart.map((p, idx) => (
+                          <Bar
+                            key={p.id}
+                            dataKey={p.id}
+                            name={p.name}
+                            stackId="reportProjects"
+                            fill={p.color || `hsl(${(idx * 55) % 360}, 70%, 50%)`}
+                            radius={idx === projectsInChart.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]}
+                            isAnimationActive={false}
+                          />
+                        ))}
+
                         <Line
                           type="monotone"
                           dataKey="capacity"
-                          name={selectedWorkCenterObj ? `Capacidade do Posto (${Math.round(reportKpis.totalWeeklyCapacity)} h/sem)` : 'Capacidade Instalada Semanal'}
+                          name={selectedWorkCenterObj ? `Capacidade do Posto (${Math.round(reportKpis.totalWeeklyCapacity)} h/sem)` : 'Capacidade Fabril Semanal'}
                           stroke="#dc2626"
                           strokeWidth={2}
                           strokeDasharray="4 4"
@@ -1251,16 +1333,23 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
-                  <div className="flex items-center justify-between text-[9px] text-slate-500 mt-0.5 px-1">
-                    <div className="flex items-center gap-3">
-                      <span className="flex items-center gap-1 font-medium">
-                        <span className="w-2 h-2 bg-indigo-600 inline-block rounded-xs"></span> Demanda Semanal
-                      </span>
-                      <span className="flex items-center gap-1 font-medium">
-                        <span className="w-2.5 h-0.5 bg-red-600 inline-block border-t border-dashed border-red-600"></span> Limite de Capacidade Instalada
-                      </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[9px] text-slate-600 mt-1 px-1 border-t border-slate-200/80 pt-1.5">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="font-bold text-slate-700">Projetos Alocados:</span>
+                      {projectsInChart.map((p, idx) => (
+                        <span key={p.id} className="flex items-center gap-1 font-medium">
+                          <span
+                            className="w-2.5 h-2.5 inline-block rounded-xs shrink-0 border border-slate-300"
+                            style={{ backgroundColor: p.color || `hsl(${(idx * 55) % 360}, 70%, 50%)` }}
+                          />
+                          <span className="truncate max-w-[130px] text-slate-800">{p.name}</span>
+                        </span>
+                      ))}
                     </div>
-                    <span className="italic">Horas disponíveis por semana</span>
+                    <div className="flex items-center gap-1 font-bold text-red-600 shrink-0">
+                      <span className="w-3 h-0.5 bg-red-600 inline-block border-t border-dashed border-red-600"></span>
+                      <span>Limite de Capacidade Instalada</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1504,7 +1593,10 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                                 className={hasWcLoad ? 'bg-indigo-50/40 hover:bg-indigo-50/70' : 'opacity-60 hover:opacity-100 hover:bg-slate-50'}
                               >
                                 <td className={`p-1 border-r border-slate-200 truncate ${hasWcLoad ? 'font-bold text-slate-900' : 'text-slate-600'}`} title={p.name}>
-                                  {hasWcLoad && <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 inline-block mr-1"></span>}
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-xs inline-block shrink-0 mr-1.5 align-middle border border-slate-300 shadow-2xs"
+                                    style={{ backgroundColor: p.color || '#6366f1' }}
+                                  />
                                   {p.name}
                                 </td>
                                 <td className="p-1 border-r border-slate-200 text-slate-600 text-[9px] truncate" title={p.turbineConfig?.turbineTypeName || 'Equipamento'}>
@@ -1557,6 +1649,10 @@ export const PrintReportModal: React.FC<PrintReportModalProps> = ({
                             return (
                               <tr key={p.id} className="hover:bg-slate-50">
                                 <td className="p-1 font-bold border-r border-slate-200 truncate" title={p.name}>
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-xs inline-block shrink-0 mr-1.5 align-middle border border-slate-300 shadow-2xs"
+                                    style={{ backgroundColor: p.color || '#6366f1' }}
+                                  />
                                   {p.name}
                                 </td>
                                 <td className="p-1 border-r border-slate-200 text-slate-600 text-[9px] truncate" title={p.turbineConfig?.turbineTypeName || 'Equipamento'}>

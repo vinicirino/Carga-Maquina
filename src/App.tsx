@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { WorkCenter, Project, DEFAULT_SECTOR_GROUPS, PlanningScenario, CalendarException } from './types';
 import { INITIAL_DATA, RAW_INITIAL_JSON, parseJsonToState } from './data/initialData';
 import { getInitialScenarios } from './data/initialScenarios';
@@ -102,13 +102,81 @@ function DashboardSkeleton() {
   );
 }
 
+const SESSION_CACHE_KEY = 'pcp_app_session_cache_v2';
+
+interface AppSessionCache {
+  scenarios?: PlanningScenario[];
+  activeScenarioId?: string;
+  workCenters?: WorkCenter[];
+  projects?: Project[];
+  sectorGroups?: string[];
+  calendarExceptions?: CalendarException[];
+  turbineTypes?: TurbineType[];
+  ganttTasks?: GanttTaskNode[];
+}
+
+function getAppSessionCache(): AppSessionCache | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    // 1. Check localStorage first (persists across tabs, browser restarts and Vercel reloads)
+    const local = localStorage.getItem(SESSION_CACHE_KEY);
+    if (local) {
+      const parsed = JSON.parse(local);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+    // 2. Check sessionStorage fallback
+    const raw = sessionStorage.getItem(SESSION_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+function saveAppSessionCache(partial: Partial<AppSessionCache>) {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = getAppSessionCache() || {};
+    const updated = { ...existing, ...partial };
+    const serialized = JSON.stringify(updated);
+    try { localStorage.setItem(SESSION_CACHE_KEY, serialized); } catch {}
+    try { sessionStorage.setItem(SESSION_CACHE_KEY, serialized); } catch {}
+  } catch (e) {
+    // ignore
+  }
+}
+
 export default function App() {
+  // Lock ref and timestamp to ignore real-time echo broadcasts when saving from THIS client tab
+  const isSavingRef = useRef(false);
+  const lastLocalSaveTimeRef = useRef(0);
+
+  // Read session cache once on initial mount to prevent demo data flash on F5
+  const initialCache = useMemo(() => getAppSessionCache(), []);
+
   // Active Module State (Carga Máquina vs Gantt EAP)
   const [activeModule, setActiveModule] = useState<'capacity' | 'gantt'>('capacity');
 
-  // Scenarios State - Loaded from Supabase, initialized with in-memory defaults
-  const [scenarios, setScenarios] = useState<PlanningScenario[]>(() => getInitialScenarios());
-  const [activeScenarioId, setActiveScenarioId] = useState<string>('scen-1-baseline');
+  // Scenarios State - Loaded from session cache or Supabase, fallback to in-memory clean defaults
+  const [scenarios, setScenarios] = useState<PlanningScenario[]>(() => {
+    if (initialCache?.scenarios && Array.isArray(initialCache.scenarios) && initialCache.scenarios.length > 0) {
+      return initialCache.scenarios;
+    }
+    return getInitialScenarios();
+  });
+  const [activeScenarioId, setActiveScenarioId] = useState<string>(() => {
+    if (initialCache?.activeScenarioId) {
+      return initialCache.activeScenarioId;
+    }
+    return 'scen-1-base-oficial';
+  });
 
   const activeScenario = useMemo(() => {
     return (
@@ -119,20 +187,58 @@ export default function App() {
   }, [scenarios, activeScenarioId]);
 
   // Active Data State (WorkCenters, Projects, SectorGroups, CalendarExceptions)
-  const [sectorGroups, setSectorGroups] = useState<string[]>(DEFAULT_SECTOR_GROUPS);
-  const [workCenters, setWorkCenters] = useState<WorkCenter[]>(INITIAL_DATA.workCenters);
-  const [projects, setProjects] = useState<Project[]>(INITIAL_DATA.projects);
-  const [calendarExceptions, setCalendarExceptions] = useState<CalendarException[]>(DEFAULT_CALENDAR_EXCEPTIONS);
+  const [sectorGroups, setSectorGroups] = useState<string[]>(() => {
+    if (initialCache?.sectorGroups && initialCache.sectorGroups.length > 0) {
+      return initialCache.sectorGroups;
+    }
+    if (activeScenario?.sectorGroups && activeScenario.sectorGroups.length > 0) {
+      return activeScenario.sectorGroups;
+    }
+    return DEFAULT_SECTOR_GROUPS;
+  });
+  const [workCenters, setWorkCenters] = useState<WorkCenter[]>(() => {
+    if (initialCache?.workCenters && Array.isArray(initialCache.workCenters)) {
+      return initialCache.workCenters;
+    }
+    if (activeScenario?.workCenters && Array.isArray(activeScenario.workCenters)) {
+      return activeScenario.workCenters;
+    }
+    return [];
+  });
+  const [projects, setProjects] = useState<Project[]>(() => {
+    if (initialCache?.projects && Array.isArray(initialCache.projects)) {
+      return initialCache.projects;
+    }
+    if (activeScenario?.projects && Array.isArray(activeScenario.projects)) {
+      return activeScenario.projects;
+    }
+    return [];
+  });
+  const [calendarExceptions, setCalendarExceptions] = useState<CalendarException[]>(() => {
+    if (initialCache?.calendarExceptions && Array.isArray(initialCache.calendarExceptions)) {
+      return initialCache.calendarExceptions;
+    }
+    if (activeScenario?.calendarExceptions && Array.isArray(activeScenario.calendarExceptions)) {
+      return activeScenario.calendarExceptions;
+    }
+    return [];
+  });
 
   const [activeTab, setActiveTab] = useState<
     'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation'
   >('overview');
 
   // Turbine Types State
-  const [turbineTypes, setTurbineTypes] = useState<TurbineType[]>(DEFAULT_TURBINE_TYPES);
+  const [turbineTypes, setTurbineTypes] = useState<TurbineType[]>(() => {
+    if (initialCache?.turbineTypes && initialCache.turbineTypes.length > 0) {
+      return initialCache.turbineTypes;
+    }
+    return DEFAULT_TURBINE_TYPES;
+  });
 
   const handleSaveTurbineTypes = (updated: TurbineType[]) => {
     setTurbineTypes(updated);
+    saveAppSessionCache({ turbineTypes: updated });
     if (isSupabaseConfigured) {
       SupabaseService.saveAllTurbineTypes(updated).catch((err) => {
         showToast(`Erro ao salvar modelos de turbina no Supabase: ${err.message}`, 'info');
@@ -141,13 +247,17 @@ export default function App() {
   };
 
   // Gantt Tasks State (WBS 0..N Hierarchy)
-  const [ganttTasks, setGanttTasks] = useState<GanttTaskNode[]>(() =>
-    recalculateHierarchyRollup(INITIAL_GANTT_TASKS)
-  );
+  const [ganttTasks, setGanttTasks] = useState<GanttTaskNode[]>(() => {
+    if (initialCache?.ganttTasks && initialCache.ganttTasks.length > 0) {
+      return recalculateHierarchyRollup(initialCache.ganttTasks);
+    }
+    return recalculateHierarchyRollup(INITIAL_GANTT_TASKS);
+  });
 
   const handleUpdateGanttTasks = (updated: GanttTaskNode[]) => {
     const rolledUp = recalculateHierarchyRollup(updated);
     setGanttTasks(rolledUp);
+    saveAppSessionCache({ ganttTasks: rolledUp });
     if (isSupabaseConfigured) {
       SupabaseService.saveAllGanttTasks(rolledUp).catch((err) => {
         showToast(`Erro ao salvar cronograma Gantt no Supabase: ${err.message}`, 'info');
@@ -171,7 +281,33 @@ export default function App() {
   const [isDbResetModalOpen, setIsDbResetModalOpen] = useState(false);
   const [isPrintReportModalOpen, setIsPrintReportModalOpen] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(isSupabaseConfigured);
-  const [isInitialLoading, setIsInitialLoading] = useState(isSupabaseConfigured);
+  // Only display skeleton on initial cloud load if we don't have session cache yet
+  const [isInitialLoading, setIsInitialLoading] = useState(
+    Boolean(isSupabaseConfigured && (!initialCache || !initialCache.workCenters?.length))
+  );
+
+  // Sync state changes to session cache to guarantee zero-flash across F5 reloads
+  useEffect(() => {
+    saveAppSessionCache({
+      scenarios,
+      activeScenarioId,
+      workCenters,
+      projects,
+      sectorGroups,
+      calendarExceptions,
+      turbineTypes,
+      ganttTasks,
+    });
+  }, [
+    scenarios,
+    activeScenarioId,
+    workCenters,
+    projects,
+    sectorGroups,
+    calendarExceptions,
+    turbineTypes,
+    ganttTasks,
+  ]);
 
   const handleOpenScenarioImportExportModal = (tab: 'export' | 'import' = 'export') => {
     setScenarioImportExportTab(tab);
@@ -227,85 +363,105 @@ export default function App() {
 
         if (!isMounted) return;
 
-        // If the Supabase database is completely fresh and empty, seed it once with standard corporate data
-        if (cloudWcs.length === 0 && cloudProjects.length === 0 && cloudScenarios.length === 0) {
+        // If the Supabase database has no scenarios yet, initialize a single clean baseline scenario
+        if (cloudScenarios.length === 0) {
           const initScens = getInitialScenarios();
-          // 1. Salva entidades base em ordem segura
           await Promise.all([
-            SupabaseService.saveAllWorkCenters(INITIAL_DATA.workCenters),
-            SupabaseService.saveAllProjects(INITIAL_DATA.projects),
-            SupabaseService.saveAllCalendarExceptions(DEFAULT_CALENDAR_EXCEPTIONS),
-            SupabaseService.saveAllTurbineTypes(DEFAULT_TURBINE_TYPES),
             SupabaseService.saveAllScenarios(initScens),
             SupabaseService.saveSystemState('active_scenario_id', initScens[0].id),
             SupabaseService.saveSystemState('sector_groups', DEFAULT_SECTOR_GROUPS),
           ]);
 
-          // 2. Salva o cronograma Gantt com proteção adicional
-          try {
-            await SupabaseService.saveAllGanttTasks(recalculateHierarchyRollup(INITIAL_GANTT_TASKS));
-          } catch (ganttErr) {
-            console.warn('Aviso ao inicializar tarefas do Gantt no Supabase:', ganttErr);
-          }
-
-          setWorkCenters(INITIAL_DATA.workCenters);
-          setProjects(INITIAL_DATA.projects);
-          setCalendarExceptions(DEFAULT_CALENDAR_EXCEPTIONS);
-          setTurbineTypes(DEFAULT_TURBINE_TYPES);
-          setGanttTasks(recalculateHierarchyRollup(INITIAL_GANTT_TASKS));
+          setWorkCenters(cloudWcs);
+          setProjects(cloudProjects);
+          setCalendarExceptions(cloudExceptions);
+          setTurbineTypes(cloudTurbines);
+          setGanttTasks(recalculateHierarchyRollup(cloudGantt));
           setScenarios(initScens);
           setActiveScenarioId(initScens[0].id);
           setSectorGroups(DEFAULT_SECTOR_GROUPS);
-          showToast('Banco de dados Supabase inicializado e sincronizado com sucesso!', 'success');
+
+          saveAppSessionCache({
+            scenarios: initScens,
+            activeScenarioId: initScens[0].id,
+            workCenters: cloudWcs,
+            projects: cloudProjects,
+            sectorGroups: DEFAULT_SECTOR_GROUPS,
+            calendarExceptions: cloudExceptions,
+            turbineTypes: cloudTurbines,
+            ganttTasks: cloudGantt,
+          });
         } else {
-          // Cloud database already has records - load them into state
-          if (cloudTurbines.length > 0) setTurbineTypes(cloudTurbines);
-          if (cloudGantt.length > 0) setGanttTasks(recalculateHierarchyRollup(cloudGantt));
+          // Cloud database already has records - load them into state directly
+          setTurbineTypes(cloudTurbines);
+          setGanttTasks(recalculateHierarchyRollup(cloudGantt));
 
-          if (cloudScenarios.length > 0) {
-            setScenarios(cloudScenarios);
-            const activeId =
-              savedActiveScenId && cloudScenarios.some((s) => s.id === savedActiveScenId)
-                ? savedActiveScenId
-                : cloudScenarios[0].id;
-            setActiveScenarioId(activeId);
+          setScenarios(cloudScenarios);
+          const activeId =
+            savedActiveScenId && cloudScenarios.some((s) => s.id === savedActiveScenId)
+              ? savedActiveScenId
+              : cloudScenarios[0].id;
+          setActiveScenarioId(activeId);
 
-            const activeScen = cloudScenarios.find((s) => s.id === activeId) || cloudScenarios[0];
-            if (activeScen) {
-              setWorkCenters(
-                activeScen.workCenters && activeScen.workCenters.length > 0
-                  ? activeScen.workCenters
-                  : cloudWcs.length > 0
-                  ? cloudWcs
-                  : INITIAL_DATA.workCenters
-              );
-              setProjects(
-                activeScen.projects && activeScen.projects.length > 0
-                  ? activeScen.projects
-                  : cloudProjects.length > 0
-                  ? cloudProjects
-                  : INITIAL_DATA.projects
-              );
-              setSectorGroups(
-                activeScen.sectorGroups && activeScen.sectorGroups.length > 0
-                  ? activeScen.sectorGroups
-                  : savedSectorGroups && savedSectorGroups.length > 0
-                  ? savedSectorGroups
-                  : DEFAULT_SECTOR_GROUPS
-              );
-              setCalendarExceptions(
-                activeScen.calendarExceptions && activeScen.calendarExceptions.length > 0
-                  ? activeScen.calendarExceptions
-                  : cloudExceptions
-              );
+          const activeScen = cloudScenarios.find((s) => s.id === activeId) || cloudScenarios[0];
+          if (activeScen) {
+            // Priority: scenario data if present and non-empty, otherwise table data (NEVER lose projects!)
+            const nextWcs = Array.isArray(activeScen.workCenters) && activeScen.workCenters.length > 0
+              ? activeScen.workCenters
+              : (cloudWcs && cloudWcs.length > 0 ? cloudWcs : []);
+
+            const nextProjects = Array.isArray(activeScen.projects) && activeScen.projects.length > 0
+              ? activeScen.projects
+              : (cloudProjects && cloudProjects.length > 0 ? cloudProjects : []);
+
+            const nextGroups =
+              Array.isArray(activeScen.sectorGroups) && activeScen.sectorGroups.length > 0
+                ? activeScen.sectorGroups
+                : savedSectorGroups && savedSectorGroups.length > 0
+                ? savedSectorGroups
+                : DEFAULT_SECTOR_GROUPS;
+
+            const nextExceptions = Array.isArray(activeScen.calendarExceptions) && activeScen.calendarExceptions.length > 0
+              ? activeScen.calendarExceptions
+              : (cloudExceptions && cloudExceptions.length > 0 ? cloudExceptions : []);
+
+            // If active scenario in scenarios table had empty projects but cloudProjects had them, sync activeScen
+            if ((!activeScen.projects || activeScen.projects.length === 0) && nextProjects.length > 0) {
+              activeScen.projects = nextProjects;
             }
+            if ((!activeScen.workCenters || activeScen.workCenters.length === 0) && nextWcs.length > 0) {
+              activeScen.workCenters = nextWcs;
+            }
+
+            setWorkCenters(nextWcs);
+            setProjects(nextProjects);
+            setSectorGroups(nextGroups);
+            setCalendarExceptions(nextExceptions);
+
+            saveAppSessionCache({
+              scenarios: cloudScenarios,
+              activeScenarioId: activeId,
+              workCenters: nextWcs,
+              projects: nextProjects,
+              sectorGroups: nextGroups,
+              calendarExceptions: nextExceptions,
+              turbineTypes: cloudTurbines,
+              ganttTasks: cloudGantt,
+            });
           } else {
-            if (cloudWcs.length > 0) setWorkCenters(cloudWcs);
-            if (cloudProjects.length > 0) setProjects(cloudProjects);
-            if (cloudExceptions.length > 0) setCalendarExceptions(cloudExceptions);
+            setWorkCenters(cloudWcs);
+            setProjects(cloudProjects);
+            setCalendarExceptions(cloudExceptions);
             if (savedSectorGroups && savedSectorGroups.length > 0) setSectorGroups(savedSectorGroups);
+            saveAppSessionCache({
+              workCenters: cloudWcs,
+              projects: cloudProjects,
+              calendarExceptions: cloudExceptions,
+              sectorGroups: savedSectorGroups && savedSectorGroups.length > 0 ? savedSectorGroups : undefined,
+              turbineTypes: cloudTurbines,
+              ganttTasks: cloudGantt,
+            });
           }
-          showToast('Dados sincronizados em nuvem via Supabase!', 'success');
         }
       } catch (err: any) {
         console.error('Falha ao sincronizar dados do Supabase:', err);
@@ -322,22 +478,62 @@ export default function App() {
 
     // Listen to real-time database changes from any other computer/browser
     const unsubscribe = SupabaseService.subscribeToChanges((table) => {
+      // Do not allow local saves to be overwritten by real-time echo broadcasts (guard for 4 seconds)
+      if (isSavingRef.current || (Date.now() - lastLocalSaveTimeRef.current < 4000)) {
+        return;
+      }
       console.log(`[Supabase Realtime] Tabela atualizada: ${table}`);
       if (table === 'work_centers') {
-        SupabaseService.fetchWorkCenters().then((wcs) => isMounted && setWorkCenters(wcs)).catch(console.error);
+        SupabaseService.fetchWorkCenters().then((wcs) => {
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000) && wcs && wcs.length > 0) {
+            setWorkCenters(wcs);
+          }
+        }).catch(console.error);
       } else if (table === 'projects') {
-        SupabaseService.fetchProjects().then((projs) => isMounted && setProjects(projs)).catch(console.error);
+        SupabaseService.fetchProjects().then((projs) => {
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000) && projs && projs.length > 0) {
+            setProjects(projs);
+            setScenarios((prev) =>
+              prev.map((s) => (s.id === activeScenarioId ? { ...s, projects: projs } : s))
+            );
+          }
+        }).catch(console.error);
       } else if (table === 'calendar_exceptions') {
-        SupabaseService.fetchCalendarExceptions().then((cal) => isMounted && setCalendarExceptions(cal)).catch(console.error);
+        SupabaseService.fetchCalendarExceptions().then((cal) => {
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000)) {
+            setCalendarExceptions(cal);
+          }
+        }).catch(console.error);
       } else if (table === 'turbine_types') {
-        SupabaseService.fetchTurbineTypes().then((types) => isMounted && setTurbineTypes(types)).catch(console.error);
+        SupabaseService.fetchTurbineTypes().then((types) => {
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000) && types && types.length > 0) {
+            setTurbineTypes(types);
+          }
+        }).catch(console.error);
       } else if (table === 'gantt_tasks') {
-        SupabaseService.fetchGanttTasks().then((tasks) => isMounted && setGanttTasks(recalculateHierarchyRollup(tasks))).catch(console.error);
+        SupabaseService.fetchGanttTasks().then((tasks) => {
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000)) {
+            setGanttTasks(recalculateHierarchyRollup(tasks));
+          }
+        }).catch(console.error);
       } else if (table === 'scenarios') {
-        SupabaseService.fetchScenarios().then((scens) => isMounted && setScenarios(scens)).catch(console.error);
+        SupabaseService.fetchScenarios().then((scens) => {
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000) && scens && scens.length > 0) {
+            setScenarios(scens);
+            const active = scens.find((s) => s.id === activeScenarioId) || scens[0];
+            if (active && Array.isArray(active.projects) && active.projects.length > 0) {
+              setProjects(active.projects);
+            }
+            if (active && Array.isArray(active.workCenters) && active.workCenters.length > 0) {
+              setWorkCenters(active.workCenters);
+            }
+          }
+        }).catch(console.error);
       } else if (table === 'system_state') {
         SupabaseService.fetchSystemState<string>('active_scenario_id', '').then((id) => {
-          if (isMounted && id) setActiveScenarioId(id);
+          if (isMounted && !isSavingRef.current && (Date.now() - lastLocalSaveTimeRef.current >= 4000) && id) {
+            setActiveScenarioId(id);
+          }
         }).catch(console.error);
       }
     });
@@ -387,8 +583,19 @@ export default function App() {
     setSectorGroups(JSON.parse(JSON.stringify(target.sectorGroups || DEFAULT_SECTOR_GROUPS)));
     setCalendarExceptions(JSON.parse(JSON.stringify(target.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS)));
 
+    saveAppSessionCache({
+      scenarios: updatedScenarios,
+      activeScenarioId: id,
+      workCenters: target.workCenters,
+      projects: target.projects,
+      sectorGroups: target.sectorGroups || DEFAULT_SECTOR_GROUPS,
+      calendarExceptions: target.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS,
+    });
+
     if (isSupabaseConfigured) {
       try {
+        isSavingRef.current = true;
+        lastLocalSaveTimeRef.current = Date.now();
         await Promise.all([
           SupabaseService.saveAllScenarios(updatedScenarios),
           SupabaseService.saveSystemState('active_scenario_id', id),
@@ -399,42 +606,73 @@ export default function App() {
         ]);
       } catch (err: any) {
         showToast(`Erro ao sincronizar cenário ativo no Supabase: ${err.message}`, 'info');
+      } finally {
+        setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
     }
   };
 
   const handleSaveCurrentScenario = async () => {
-    const updatedScenarios = scenarios.map((scen) => {
-      if (scen.id === activeScenarioId) {
-        return {
-          ...scen,
-          workCenters: JSON.parse(JSON.stringify(workCenters)),
-          projects: JSON.parse(JSON.stringify(projects)),
-          sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
-          calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
-          updatedAt: new Date().toISOString(),
-        };
-      }
-      return scen;
-    });
+    isSavingRef.current = true;
+    lastLocalSaveTimeRef.current = Date.now();
+    try {
+      const sanitizedCurrentProjects = projects.map((p) => sanitizeProjectSchedules(p, workCenters));
+      const sanitizedCurrentWcs = workCenters.map((w) => ({
+        ...w,
+        id: w.id || `wc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        name: w.name || 'Centro Sem Nome',
+      }));
 
-    setScenarios(updatedScenarios);
+      const updatedScenarios = scenarios.map((scen) => {
+        if (scen.id === activeScenarioId) {
+          return {
+            ...scen,
+            workCenters: JSON.parse(JSON.stringify(sanitizedCurrentWcs)),
+            projects: JSON.parse(JSON.stringify(sanitizedCurrentProjects)),
+            sectorGroups: JSON.parse(JSON.stringify(sectorGroups)),
+            calendarExceptions: JSON.parse(JSON.stringify(calendarExceptions)),
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return scen;
+      });
 
-    if (isSupabaseConfigured) {
-      try {
+      setProjects(sanitizedCurrentProjects);
+      setWorkCenters(sanitizedCurrentWcs);
+      setScenarios(updatedScenarios);
+
+      // Persist locally immediately (guarantees data persistence across reloads/restarts)
+      saveAppSessionCache({
+        scenarios: updatedScenarios,
+        activeScenarioId,
+        workCenters: sanitizedCurrentWcs,
+        projects: sanitizedCurrentProjects,
+        sectorGroups,
+        calendarExceptions,
+        turbineTypes,
+        ganttTasks,
+      });
+
+      if (isSupabaseConfigured) {
         await Promise.all([
           SupabaseService.saveAllScenarios(updatedScenarios),
-          SupabaseService.saveAllWorkCenters(workCenters),
-          SupabaseService.saveAllProjects(projects),
+          SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
+          SupabaseService.saveAllWorkCenters(sanitizedCurrentWcs),
+          SupabaseService.saveAllProjects(sanitizedCurrentProjects),
           SupabaseService.saveAllCalendarExceptions(calendarExceptions),
           SupabaseService.saveSystemState('sector_groups', sectorGroups),
         ]);
         showToast('✅ Alterações do cenário salvas e sincronizadas no Supabase!', 'success');
-      } catch (err: any) {
-        showToast(`Erro ao persistir cenário no Supabase: ${err.message}`, 'info');
+      } else {
+        showToast('✅ Alterações salvas no cenário com sucesso!', 'success');
       }
-    } else {
-      showToast('Alterações salvas na sessão atual!', 'success');
+    } catch (err: any) {
+      console.error('Erro ao salvar cenário:', err);
+      showToast(`Aviso ao persistir cenário: ${err.message}`, 'info');
+    } finally {
+      setTimeout(() => {
+        isSavingRef.current = false;
+      }, 3500);
     }
   };
 
@@ -990,8 +1228,18 @@ export default function App() {
       setProjects(activeTarget.projects);
       setSectorGroups(activeTarget.sectorGroups || validatedGroups);
 
+      saveAppSessionCache({
+        scenarios: newScenarios,
+        activeScenarioId: targetId,
+        workCenters: activeTarget.workCenters,
+        projects: activeTarget.projects,
+        sectorGroups: activeTarget.sectorGroups || validatedGroups,
+      });
+
       if (isSupabaseConfigured) {
         try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           await Promise.all([
             SupabaseService.saveAllScenarios(newScenarios),
             SupabaseService.saveSystemState('active_scenario_id', targetId),
@@ -1001,12 +1249,15 @@ export default function App() {
           ]);
         } catch (err: any) {
           console.error('Erro ao salvar cenários importados no Supabase:', err);
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       }
       return;
     }
 
     if (mode === 'create_new_scenario') {
+      const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
       const newScen: PlanningScenario = {
         id: `scen-${Date.now()}`,
         name: scenarioName || 'Cenário Importado',
@@ -1014,42 +1265,55 @@ export default function App() {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         workCenters: newWcs,
-        projects: newProjects,
+        projects: sanitizedProjects,
         sectorGroups: validatedGroups,
       };
       const nextScens = [...scenarios, newScen];
       setScenarios(nextScens);
       setActiveScenarioId(newScen.id);
       setWorkCenters(newWcs);
-      setProjects(newProjects);
+      setProjects(sanitizedProjects);
       setSectorGroups(validatedGroups);
+
+      saveAppSessionCache({
+        scenarios: nextScens,
+        activeScenarioId: newScen.id,
+        workCenters: newWcs,
+        projects: sanitizedProjects,
+        sectorGroups: validatedGroups,
+      });
 
       if (isSupabaseConfigured) {
         try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           await Promise.all([
             SupabaseService.saveAllScenarios(nextScens),
             SupabaseService.saveSystemState('active_scenario_id', newScen.id),
             SupabaseService.saveAllWorkCenters(newWcs),
-            SupabaseService.saveAllProjects(newProjects),
+            SupabaseService.saveAllProjects(sanitizedProjects),
             SupabaseService.saveSystemState('sector_groups', validatedGroups),
           ]);
         } catch (err: any) {
           console.error('Erro ao salvar novo cenário importado no Supabase:', err);
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       }
       return;
     }
 
     // Default mode: 'replace_current'
+    const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
     setWorkCenters(newWcs);
-    setProjects(newProjects);
+    setProjects(sanitizedProjects);
     setSectorGroups(validatedGroups);
     const nextScens = scenarios.map((s) =>
       s.id === activeScenarioId
         ? {
             ...s,
             workCenters: newWcs,
-            projects: newProjects,
+            projects: sanitizedProjects,
             sectorGroups: validatedGroups,
             updatedAt: new Date().toISOString(),
           }
@@ -1057,17 +1321,29 @@ export default function App() {
     );
     setScenarios(nextScens);
 
+    saveAppSessionCache({
+      scenarios: nextScens,
+      activeScenarioId,
+      workCenters: newWcs,
+      projects: sanitizedProjects,
+      sectorGroups: validatedGroups,
+    });
+
     if (isSupabaseConfigured) {
       try {
-        const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+        isSavingRef.current = true;
+        lastLocalSaveTimeRef.current = Date.now();
         await Promise.all([
+          SupabaseService.saveAllScenarios(nextScens),
+          SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
           SupabaseService.saveAllWorkCenters(newWcs),
-          SupabaseService.saveAllProjects(newProjects),
+          SupabaseService.saveAllProjects(sanitizedProjects),
           SupabaseService.saveSystemState('sector_groups', validatedGroups),
-          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
         ]);
       } catch (err: any) {
         console.error('Erro ao atualizar cenário corrente importado no Supabase:', err);
+      } finally {
+        setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
     }
   };
@@ -1106,8 +1382,18 @@ export default function App() {
       setSectorGroups(validatedGroups);
       setActiveTab('projects');
 
+      saveAppSessionCache({
+        scenarios: nextScens,
+        activeScenarioId: newScen.id,
+        workCenters: newWcs,
+        projects: sanitizedProjects,
+        sectorGroups: validatedGroups,
+      });
+
       if (isSupabaseConfigured) {
         try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           await Promise.all([
             SupabaseService.saveAllScenarios(nextScens),
             SupabaseService.saveSystemState('active_scenario_id', newScen.id),
@@ -1115,9 +1401,15 @@ export default function App() {
             SupabaseService.saveAllProjects(sanitizedProjects),
             SupabaseService.saveSystemState('sector_groups', validatedGroups),
           ]);
+          showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!`, 'success');
         } catch (err: any) {
           console.error('Erro ao salvar planilha no Supabase:', err);
+          showToast(`Aviso: Cenário criado localmente. Erro no Supabase: ${err.message}`, 'info');
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
+      } else {
+        showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!`, 'success');
       }
       return;
     }
@@ -1141,32 +1433,60 @@ export default function App() {
       setScenarios(nextScens);
       setActiveTab('projects');
 
+      saveAppSessionCache({
+        scenarios: nextScens,
+        activeScenarioId,
+        workCenters: newWcs,
+        projects: sanitizedProjects,
+        sectorGroups: validatedGroups,
+      });
+
       if (isSupabaseConfigured) {
         try {
-          const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           await Promise.all([
+            SupabaseService.saveAllScenarios(nextScens),
+            SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
             SupabaseService.saveAllWorkCenters(newWcs),
             SupabaseService.saveAllProjects(sanitizedProjects),
             SupabaseService.saveSystemState('sector_groups', validatedGroups),
-            activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
           ]);
+          showToast(`✅ Carteira substituída por ${sanitizedProjects.length} projetos da planilha!`, 'success');
         } catch (err: any) {
           console.error('Erro ao atualizar projetos importados no Supabase:', err);
+          showToast(`Aviso: Projetos atualizados localmente. Erro no Supabase: ${err.message}`, 'info');
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
+      } else {
+        showToast(`✅ Carteira substituída por ${sanitizedProjects.length} projetos da planilha!`, 'success');
       }
       return;
     }
 
     // Default mode: 'append' (replace existing projects with same name to prevent duplicates, or append new ones)
     const sanitizedNewProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
+    const currentExistingProjects = projects.length > 0 ? projects : (activeScenario?.projects || []);
     const projectMap = new Map<string, Project>();
-    // Existing projects
-    projects.forEach((p) => {
-      projectMap.set(p.name.trim().toUpperCase(), sanitizeProjectSchedules(p, newWcs));
+    // Existing projects keyed by ID and Name
+    currentExistingProjects.forEach((p) => {
+      projectMap.set(p.id, sanitizeProjectSchedules(p, newWcs));
     });
-    // Overwrite / Add imported projects (unique by project name)
+    // Overwrite / Add imported projects (match by name case-insensitively or by id)
     sanitizedNewProjects.forEach((p) => {
-      projectMap.set(p.name.trim().toUpperCase(), p);
+      let existingId: string | undefined;
+      for (const [id, existingP] of projectMap.entries()) {
+        if (existingP.name.trim().toUpperCase() === p.name.trim().toUpperCase() || id === p.id) {
+          existingId = id;
+          break;
+        }
+      }
+      if (existingId) {
+        projectMap.set(existingId, { ...p, id: existingId });
+      } else {
+        projectMap.set(p.id, p);
+      }
     });
     const mergedProjects = Array.from(projectMap.values());
 
@@ -1187,18 +1507,34 @@ export default function App() {
     setScenarios(nextScens);
     setActiveTab('projects');
 
+    saveAppSessionCache({
+      scenarios: nextScens,
+      activeScenarioId,
+      workCenters: newWcs,
+      projects: mergedProjects,
+      sectorGroups: validatedGroups,
+    });
+
     if (isSupabaseConfigured) {
       try {
-        const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+        isSavingRef.current = true;
+        lastLocalSaveTimeRef.current = Date.now();
         await Promise.all([
+          SupabaseService.saveAllScenarios(nextScens),
+          SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
           SupabaseService.saveAllWorkCenters(newWcs),
           SupabaseService.saveAllProjects(mergedProjects),
           SupabaseService.saveSystemState('sector_groups', validatedGroups),
-          activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
         ]);
+        showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados ao cenário com sucesso!`, 'success');
       } catch (err: any) {
         console.error('Erro ao anexar projetos importados no Supabase:', err);
+        showToast(`Aviso: Projetos adicionados localmente. Erro no Supabase: ${err.message}`, 'info');
+      } finally {
+        setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
+    } else {
+      showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados ao cenário com sucesso!`, 'success');
     }
   };
 
@@ -1216,8 +1552,19 @@ export default function App() {
       setCalendarExceptions(activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS);
       showToast(`📦 Pacote com ${importedScenarios.length} cenários restaurado com sucesso!`);
 
+      saveAppSessionCache({
+        scenarios: importedScenarios,
+        activeScenarioId: targetId,
+        workCenters: activeTarget.workCenters,
+        projects: activeTarget.projects,
+        sectorGroups: activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS,
+        calendarExceptions: activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS,
+      });
+
       if (isSupabaseConfigured) {
         try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           await Promise.all([
             SupabaseService.saveAllScenarios(importedScenarios),
             SupabaseService.saveSystemState('active_scenario_id', targetId),
@@ -1228,6 +1575,8 @@ export default function App() {
           ]);
         } catch (err: any) {
           console.error('Erro ao restaurar cenários no Supabase:', err);
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       }
       return;
@@ -1245,8 +1594,19 @@ export default function App() {
       setCalendarExceptions(activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS);
       showToast(`✨ ${importedScenarios.length} cenários adicionados à biblioteca!`);
 
+      saveAppSessionCache({
+        scenarios: nextScens,
+        activeScenarioId: targetId,
+        workCenters: activeTarget.workCenters,
+        projects: activeTarget.projects,
+        sectorGroups: activeTarget.sectorGroups || DEFAULT_SECTOR_GROUPS,
+        calendarExceptions: activeTarget.calendarExceptions || DEFAULT_CALENDAR_EXCEPTIONS,
+      });
+
       if (isSupabaseConfigured) {
         try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           await Promise.all([
             SupabaseService.saveAllScenarios(nextScens),
             SupabaseService.saveSystemState('active_scenario_id', targetId),
@@ -1257,6 +1617,8 @@ export default function App() {
           ]);
         } catch (err: any) {
           console.error('Erro ao adicionar cenários no Supabase:', err);
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       }
       return;
@@ -1292,8 +1654,19 @@ export default function App() {
         setCalendarExceptions(scenarioCalendar);
         showToast(`✅ Novo Cenário "${scenarioName}" importado e ativado com sucesso!`);
 
+        saveAppSessionCache({
+          scenarios: nextScens,
+          activeScenarioId: newScen.id,
+          workCenters: newScen.workCenters,
+          projects: newScen.projects,
+          sectorGroups: scenarioGroups,
+          calendarExceptions: scenarioCalendar,
+        });
+
         if (isSupabaseConfigured) {
           try {
+            isSavingRef.current = true;
+            lastLocalSaveTimeRef.current = Date.now();
             await Promise.all([
               SupabaseService.saveAllScenarios(nextScens),
               SupabaseService.saveSystemState('active_scenario_id', newScen.id),
@@ -1304,6 +1677,8 @@ export default function App() {
             ]);
           } catch (err: any) {
             console.error('Erro ao salvar cenário importado no Supabase:', err);
+          } finally {
+            setTimeout(() => { isSavingRef.current = false; }, 3500);
           }
         }
         return;
@@ -1330,18 +1705,31 @@ export default function App() {
         setScenarios(nextScens);
         showToast(`✅ Cenário ativo atualizado exatamente com os dados do arquivo importado!`);
 
+        saveAppSessionCache({
+          scenarios: nextScens,
+          activeScenarioId,
+          workCenters: scenario.workCenters,
+          projects: scenario.projects,
+          sectorGroups: scenarioGroups,
+          calendarExceptions: scenarioCalendar,
+        });
+
         if (isSupabaseConfigured) {
           try {
-            const activeScen = nextScens.find((s) => s.id === activeScenarioId);
+            isSavingRef.current = true;
+            lastLocalSaveTimeRef.current = Date.now();
             await Promise.all([
+              SupabaseService.saveAllScenarios(nextScens),
+              SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
               SupabaseService.saveAllWorkCenters(scenario.workCenters),
               SupabaseService.saveAllProjects(scenario.projects),
               SupabaseService.saveAllCalendarExceptions(scenarioCalendar),
               SupabaseService.saveSystemState('sector_groups', scenarioGroups),
-              activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
             ]);
           } catch (err: any) {
             console.error('Erro ao substituir cenário no Supabase:', err);
+          } finally {
+            setTimeout(() => { isSavingRef.current = false; }, 3500);
           }
         }
       }
@@ -1363,62 +1751,33 @@ export default function App() {
   };
 
   const handleResetToCleanCompanyState = () => {
-    const cleanWcs = INITIAL_DATA.workCenters.map((wc) => ({
-      ...wc,
-      resourcesCount: 1,
-      dailyHours: 8,
-      daysPerWeek: 5,
-      efficiencyPercentage: 100,
-    }));
-    const cleanProjects: Project[] = [];
-    const cleanScenarios: PlanningScenario[] = [
-      {
-        id: 'scen-1-empresa-base',
-        name: 'Cenário 1: Base Operacional da Empresa (Principal)',
-        description: 'Base limpa e oficial para cadastro e importação dos projetos e centros de trabalho da empresa.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        isBaseline: true,
-        workCenters: cleanWcs,
-        projects: cleanProjects,
-        sectorGroups: DEFAULT_SECTOR_GROUPS,
-      },
-      {
-        id: 'scen-2-expansao-turno',
-        name: 'Cenário 2: Turno Extra / Expansão',
-        description: 'Cenário de simulação para turno estendido ou acréscimo de postos.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        workCenters: cleanWcs,
-        projects: cleanProjects,
-        sectorGroups: DEFAULT_SECTOR_GROUPS,
-      },
-      {
-        id: 'scen-3-simulacao-prazos',
-        name: 'Cenário 3: Simulação de Prazos & Setores',
-        description: 'Cenário de simulação para ajuste de datas e balanceamento de gargalos.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        workCenters: cleanWcs,
-        projects: cleanProjects,
-        sectorGroups: DEFAULT_SECTOR_GROUPS,
-      },
-    ];
+    const cleanScenarios = getInitialScenarios();
     setScenarios(cleanScenarios);
-    setActiveScenarioId('scen-1-empresa-base');
-    setWorkCenters(cleanWcs);
-    setProjects(cleanProjects);
+    setActiveScenarioId('scen-1-base-oficial');
+    setWorkCenters([]);
+    setProjects([]);
     setSectorGroups(DEFAULT_SECTOR_GROUPS);
+    setCalendarExceptions([]);
+
+    saveAppSessionCache({
+      scenarios: cleanScenarios,
+      activeScenarioId: 'scen-1-base-oficial',
+      workCenters: [],
+      projects: [],
+      sectorGroups: DEFAULT_SECTOR_GROUPS,
+      calendarExceptions: [],
+    });
 
     if (isSupabaseConfigured) {
       Promise.all([
-        SupabaseService.saveAllWorkCenters(cleanWcs),
-        SupabaseService.saveAllProjects(cleanProjects),
+        SupabaseService.saveAllWorkCenters([]),
+        SupabaseService.saveAllProjects([]),
+        SupabaseService.saveAllCalendarExceptions([]),
         SupabaseService.saveAllScenarios(cleanScenarios),
-        SupabaseService.saveSystemState('active_scenario_id', 'scen-1-empresa-base'),
+        SupabaseService.saveSystemState('active_scenario_id', 'scen-1-base-oficial'),
         SupabaseService.saveSystemState('sector_groups', DEFAULT_SECTOR_GROUPS),
       ]).then(() => {
-        showToast('Base operacional limpa sincronizada no Supabase!', 'success');
+        showToast('Base operacional limpa e zerada sincronizada no Supabase!', 'success');
       }).catch((e) => {
         showToast(`Erro ao sincronizar base limpa no Supabase: ${e.message}`, 'info');
       });
@@ -1434,8 +1793,8 @@ export default function App() {
           const targetId = saved.activeScenarioId || saved.scenarios[0].id;
           setActiveScenarioId(targetId);
           const target = saved.scenarios.find((s: any) => s.id === targetId) || saved.scenarios[0];
-          setWorkCenters(target.workCenters);
-          setProjects(target.projects);
+          setWorkCenters(target.workCenters || []);
+          setProjects(target.projects || []);
           setSectorGroups(target.sectorGroups || DEFAULT_SECTOR_GROUPS);
           showToast('⭐ Linha de base oficial restaurada do Supabase com sucesso!', 'success');
           return;
@@ -1450,8 +1809,8 @@ export default function App() {
     const baselineScen = scenarios.find((s) => s.isBaseline);
     if (baselineScen) {
       setActiveScenarioId(baselineScen.id);
-      setWorkCenters(baselineScen.workCenters);
-      setProjects(baselineScen.projects);
+      setWorkCenters(baselineScen.workCenters || []);
+      setProjects(baselineScen.projects || []);
       setSectorGroups(baselineScen.sectorGroups || DEFAULT_SECTOR_GROUPS);
       showToast(`⭐ Restaurado para o cenário baseline: "${baselineScen.name}"!`);
     } else {
@@ -1460,25 +1819,40 @@ export default function App() {
   };
 
   const handleHardClearStorage = async () => {
-    if (isSupabaseConfigured) {
-      try {
+    try {
+      sessionStorage.removeItem(SESSION_CACHE_KEY);
+      sessionStorage.clear();
+      localStorage.clear();
+      const cleanScens = getInitialScenarios();
+      if (isSupabaseConfigured) {
+        await SupabaseService.wipeAllDatabaseData();
         await Promise.all([
-          SupabaseService.saveAllWorkCenters([]),
-          SupabaseService.saveAllProjects([]),
-          SupabaseService.saveAllCalendarExceptions([]),
-          SupabaseService.saveAllTurbineTypes([]),
-          SupabaseService.saveAllGanttTasks([]),
-          SupabaseService.saveAllScenarios([]),
-          SupabaseService.saveSystemState('active_scenario_id', null),
-          SupabaseService.saveSystemState('primary_baseline', null),
+          SupabaseService.saveAllScenarios(cleanScens),
+          SupabaseService.saveSystemState('active_scenario_id', cleanScens[0].id),
+          SupabaseService.saveSystemState('sector_groups', DEFAULT_SECTOR_GROUPS),
         ]);
-        showToast('Banco de dados Supabase limpo com sucesso!', 'info');
-        window.location.reload();
-      } catch (e: any) {
-        showToast(`Erro ao limpar dados no Supabase: ${e.message}`, 'info');
       }
-    } else {
-      window.location.reload();
+      setWorkCenters([]);
+      setProjects([]);
+      setCalendarExceptions([]);
+      setTurbineTypes([]);
+      setGanttTasks([]);
+      setScenarios(cleanScens);
+      setActiveScenarioId(cleanScens[0].id);
+      setSectorGroups(DEFAULT_SECTOR_GROUPS);
+      saveAppSessionCache({
+        scenarios: cleanScens,
+        activeScenarioId: cleanScens[0].id,
+        workCenters: [],
+        projects: [],
+        sectorGroups: DEFAULT_SECTOR_GROUPS,
+        calendarExceptions: [],
+        turbineTypes: [],
+        ganttTasks: [],
+      });
+      showToast('✅ Banco de dados e armazenamento zerados com sucesso! Todos os cadastros começam do 0.', 'success');
+    } catch (e: any) {
+      showToast(`Erro ao limpar dados no Supabase: ${e.message}`, 'info');
     }
   };
 
