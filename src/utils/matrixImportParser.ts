@@ -115,6 +115,20 @@ export function findMatchingWorkCenter(header: string, workCenters: WorkCenter[]
 export function guessCategoryFromHeader(header: string, sectorGroups: string[]): string {
   const norm = normalizeString(header);
   
+  // Check if enclosed in brackets: e.g. "[CALDEIRARIA] ROBO 1"
+  const bracketMatch = header.match(/^\[([^\]]+)\]/);
+  if (bracketMatch && bracketMatch[1]?.trim()) {
+    return bracketMatch[1].trim().toUpperCase();
+  }
+
+  // Check if any existing sector group name is part of the header first
+  for (const group of sectorGroups) {
+    if (norm.includes(normalizeString(group))) {
+      return group.trim().toUpperCase();
+    }
+  }
+
+  // Industrial keyword detection
   if (norm.includes('SOLDA') || norm.includes('SOLDAGEM')) return 'SOLDA';
   if (norm.includes('CALDEIRARIA') || norm.includes('ROBO CALDEIRARIA')) return 'CALDEIRARIA';
   if (
@@ -122,26 +136,24 @@ export function guessCategoryFromHeader(header: string, sectorGroups: string[]):
     norm.includes('FRESADORA') ||
     norm.includes('MANDRILHADORA') ||
     norm.includes('USINAGEM') ||
-    norm.includes('RETIFICA')
+    norm.includes('RETIFICA') ||
+    norm.includes('FURADEIRA') ||
+    norm.includes('CNC')
   ) {
     return 'USINAGEM';
   }
-  if (norm.includes('CORTE') || norm.includes('PLASMA') || norm.includes('OXICORTE') || norm.includes('OXIPIRA')) {
+  if (norm.includes('CORTE') || norm.includes('PLASMA') || norm.includes('OXICORTE') || norm.includes('OXIPIRA') || norm.includes('LASER')) {
     return 'CORTE';
   }
-  if (norm.includes('MONTAGEM')) return 'MONTAGEM';
-  if (norm.includes('PINTURA') || norm.includes('JATEAMENTO') || norm.includes('LIXAMENTO') || norm.includes('METALIZACAO')) {
+  if (norm.includes('MONTAGEM') || norm.includes('SUBMONTAGEM')) return 'MONTAGEM';
+  if (norm.includes('PINTURA') || norm.includes('JATEAMENTO') || norm.includes('LIXAMENTO') || norm.includes('METALIZACAO') || norm.includes('ACABAMENTO')) {
     return 'PINTURA';
   }
-  if (norm.includes('QUALIDADE') || norm.includes('GARANTIA')) return 'QUALIDADE';
+  if (norm.includes('QUALIDADE') || norm.includes('GARANTIA') || norm.includes('INSPECAO') || norm.includes('METROLOGIA')) return 'QUALIDADE';
   if (norm.includes('PROJETO') || norm.includes('ENGENHARIA')) return 'ENGENHARIA';
-
-  // Check if any sector group name is part of the header
-  for (const group of sectorGroups) {
-    if (norm.includes(normalizeString(group))) {
-      return group;
-    }
-  }
+  if (norm.includes('LOGISTICA') || norm.includes('EXPEDICAO') || norm.includes('ALMOXARIFADO')) return 'LOGISTICA';
+  if (norm.includes('MANUTENCAO')) return 'MANUTENCAO';
+  if (norm.includes('ELETRICA') || norm.includes('INSTRUMENTACAO')) return 'ELETRICA';
 
   return sectorGroups[0] || 'OUTROS';
 }

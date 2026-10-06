@@ -22,6 +22,10 @@ export interface ParsedJsonResult {
     scenariosCount: number;
     totalHours: number;
     hasGroupDates: boolean;
+    newWorkCentersCount: number;
+    newSectorGroupsCount: number;
+    newWorkCentersList?: string[];
+    newSectorGroupsList?: string[];
   };
 }
 
@@ -45,7 +49,11 @@ const PROJECT_PALETTE = [
  * 3. Single scenario or custom object ({ workCenters: [...], projects: [...] })
  * 4. Legacy ERP Matrix ({ "PROJETO 1": [{ "TORNO CNC": 120.5 }] })
  */
-export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
+export function analyzeAndParseJson(
+  rawInput: string,
+  currentWorkCenters: WorkCenter[] = [],
+  currentSectorGroups: string[] = []
+): ParsedJsonResult {
   const emptyStats = {
     projectsCount: 0,
     workCentersCount: 0,
@@ -53,6 +61,10 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
     scenariosCount: 0,
     totalHours: 0,
     hasGroupDates: false,
+    newWorkCentersCount: 0,
+    newSectorGroupsCount: 0,
+    newWorkCentersList: [] as string[],
+    newSectorGroupsList: [] as string[],
   };
 
   let parsed: any;
@@ -81,6 +93,30 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
       projects: [],
       sectorGroups: DEFAULT_SECTOR_GROUPS,
       stats: emptyStats,
+    };
+  }
+
+  // Base entities to preserve and merge with
+  const baseWcs = currentWorkCenters && currentWorkCenters.length > 0 ? currentWorkCenters : [];
+  const baseGroups = currentSectorGroups && currentSectorGroups.length > 0 ? currentSectorGroups : DEFAULT_SECTOR_GROUPS;
+
+  // If parsed is a raw array of project objects: [ { name: "...", workCenterHours: { ... } } ]
+  if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && !parsed[0].workCenters) {
+    parsed = {
+      projects: parsed,
+    };
+  } else if (
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    !parsed.projects &&
+    !parsed.workCenters &&
+    !parsed.scenarios &&
+    (parsed.workCenterHours || parsed.groupDates || (parsed.name && (parsed.startDate || parsed.endDate)))
+  ) {
+    // If parsed is a single project object: { name: "...", workCenterHours: { ... } }
+    parsed = {
+      projects: [parsed],
     };
   }
 
@@ -165,6 +201,12 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
         });
       });
 
+      // Detect new entities relative to base
+      const newWcsFound = allWcs.filter(
+        (w) => !baseWcs.some((bw) => bw.id === w.id || bw.name.toUpperCase() === w.name.toUpperCase())
+      );
+      const newGroupsFound = activeScen.sectorGroups.filter((g) => !baseGroups.includes(g));
+
       return {
         success: true,
         detectedFormat: 'scenarios_bundle',
@@ -181,45 +223,119 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
           scenariosCount: validatedScenarios.length,
           totalHours: Math.round(totalHours),
           hasGroupDates,
+          newWorkCentersCount: newWcsFound.length,
+          newSectorGroupsCount: newGroupsFound.length,
+          newWorkCentersList: newWcsFound.map((w) => w.name),
+          newSectorGroupsList: newGroupsFound,
         },
       };
     }
   }
 
-  // Case 2: Full Structured v2 ({ workCenters: [...], projects: [...] })
+  // Case 2: Full Structured v2 ({ workCenters: [...], projects: [...] }) or auto-wrapped projects array
   if (Array.isArray(parsed.workCenters) || Array.isArray(parsed.projects)) {
     const rawWcs = Array.isArray(parsed.workCenters) ? parsed.workCenters : [];
     const rawProjs = Array.isArray(parsed.projects) ? parsed.projects : [];
 
-    // Extract or infer sector groups
-    let sectorGroups: string[] = Array.isArray(parsed.sectorGroups) && parsed.sectorGroups.length > 0
-      ? parsed.sectorGroups.map((g: any) => String(g).trim().toUpperCase())
-      : [...DEFAULT_SECTOR_GROUPS];
+    // Start with existing base work centers to prevent loss and register additions
+    const finalWorkCenters: WorkCenter[] = [...baseWcs];
+    const finalSectorGroups = new Set<string>([...baseGroups]);
+    const newWorkCentersList: string[] = [];
+    const newSectorGroupsList: string[] = [];
 
-    // Collect any new categories present in workCenters
-    rawWcs.forEach((wc: any) => {
-      if (wc.category && typeof wc.category === 'string') {
-        const cat = wc.category.trim().toUpperCase();
-        if (cat && !sectorGroups.includes(cat)) {
-          sectorGroups.push(cat);
+    // Extract or infer sector groups from payload
+    if (Array.isArray(parsed.sectorGroups)) {
+      parsed.sectorGroups.forEach((g: any) => {
+        const cat = String(g).trim().toUpperCase();
+        if (cat) {
+          if (!finalSectorGroups.has(cat)) {
+            newSectorGroupsList.push(cat);
+          }
+          finalSectorGroups.add(cat);
         }
+      });
+    }
+
+    // Merge explicitly provided workCenters
+    rawWcs.forEach((wc: any, idx: number) => {
+      const name = String(wc.name || `Centro de Trabalho ${idx + 1}`).trim();
+      const cat = (wc.category && String(wc.category).trim())
+        ? String(wc.category).trim().toUpperCase()
+        : initialCategorySeed(name);
+
+      if (cat && !finalSectorGroups.has(cat)) {
+        newSectorGroupsList.push(cat);
+        finalSectorGroups.add(cat);
+      }
+
+      const existingIndex = finalWorkCenters.findIndex(
+        (w) => w.id === wc.id || w.name.toUpperCase() === name.toUpperCase()
+      );
+
+      if (existingIndex >= 0) {
+        // Keep existing, merge category if missing
+        if (!finalWorkCenters[existingIndex].category && cat) {
+          finalWorkCenters[existingIndex].category = cat;
+        }
+      } else {
+        // Brand new work center to register
+        const newWc: WorkCenter = {
+          id: wc.id || `wc-${Date.now()}-${name.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Math.random().toString(36).substring(2, 5)}`,
+          name,
+          dailyHours: Number(wc.dailyHours) > 0 ? Number(wc.dailyHours) : 8,
+          daysPerWeek: Number(wc.daysPerWeek) > 0 ? Number(wc.daysPerWeek) : 5,
+          resourcesCount: Number(wc.resourcesCount) > 0 ? Number(wc.resourcesCount) : 1,
+          efficiencyPercentage: Number(wc.efficiencyPercentage) > 0 ? Number(wc.efficiencyPercentage) : 100,
+          category: cat,
+        };
+        finalWorkCenters.push(newWc);
+        newWorkCentersList.push(name);
       }
     });
 
-    const workCenters: WorkCenter[] = rawWcs.map((wc: any, idx: number) => ({
-      id: wc.id || `wc-${idx + 1}-${String(wc.name || 'centro').toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-      name: String(wc.name || `Centro de Trabalho ${idx + 1}`).trim(),
-      dailyHours: Number(wc.dailyHours) > 0 ? Number(wc.dailyHours) : 8,
-      daysPerWeek: Number(wc.daysPerWeek) > 0 ? Number(wc.daysPerWeek) : 5,
-      resourcesCount: Number(wc.resourcesCount) > 0 ? Number(wc.resourcesCount) : 1,
-      efficiencyPercentage: Number(wc.efficiencyPercentage) > 0 ? Number(wc.efficiencyPercentage) : 100,
-      category: (wc.category && String(wc.category).trim())
-        ? String(wc.category).trim().toUpperCase()
-        : initialCategorySeed(String(wc.name || '')),
-    }));
-
     let totalHours = 0;
     let hasGroupDates = false;
+
+    // Discover any work centers and sector groups referenced in project hours or groupDates but missing from base
+    rawProjs.forEach((p: any) => {
+      if (p.workCenterHours && typeof p.workCenterHours === 'object') {
+        Object.keys(p.workCenterHours).forEach((rawKey) => {
+          const cleanName = sanitizeWorkCenterName(rawKey);
+          if (!cleanName) return;
+          const exists = finalWorkCenters.some(
+            (w) =>
+              w.id.trim().toUpperCase() === rawKey.trim().toUpperCase() ||
+              w.name.trim().toUpperCase() === cleanName.toUpperCase()
+          );
+          if (!exists) {
+            const cat = initialCategorySeed(cleanName);
+            if (!finalSectorGroups.has(cat)) {
+              newSectorGroupsList.push(cat);
+              finalSectorGroups.add(cat);
+            }
+            finalWorkCenters.push({
+              id: `wc-${Date.now()}-${cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Math.random().toString(36).substring(2, 5)}`,
+              name: cleanName,
+              category: cat,
+              dailyHours: 8,
+              daysPerWeek: 5,
+              resourcesCount: 1,
+              efficiencyPercentage: 100,
+            });
+            newWorkCentersList.push(cleanName);
+          }
+        });
+      }
+      if (p.groupDates && typeof p.groupDates === 'object') {
+        Object.keys(p.groupDates).forEach((g) => {
+          const cat = String(g).trim().toUpperCase();
+          if (cat && !finalSectorGroups.has(cat)) {
+            newSectorGroupsList.push(cat);
+            finalSectorGroups.add(cat);
+          }
+        });
+      }
+    });
 
     const projects: Project[] = rawProjs.map((p: any, idx: number) => {
       const cleanHours: Record<string, number> = {};
@@ -250,20 +366,26 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
       });
     });
 
+    const compiledSectorGroups = Array.from(finalSectorGroups);
+
     return {
       success: true,
       detectedFormat: 'full_v2',
-      formatDescription: 'Estrutura Completa de Planejamento (v2.0)',
-      workCenters,
+      formatDescription: rawProjs.length === 1 ? 'Projeto Individual com Centros de Trabalho' : 'Estrutura Completa de Planejamento (v2.0)',
+      workCenters: finalWorkCenters,
       projects,
-      sectorGroups,
+      sectorGroups: compiledSectorGroups,
       stats: {
         projectsCount: projects.length,
-        workCentersCount: workCenters.length,
-        sectorGroupsCount: sectorGroups.length,
+        workCentersCount: finalWorkCenters.length,
+        sectorGroupsCount: compiledSectorGroups.length,
         scenariosCount: 1,
         totalHours: Math.round(totalHours),
         hasGroupDates,
+        newWorkCentersCount: newWorkCentersList.length,
+        newSectorGroupsCount: newSectorGroupsList.length,
+        newWorkCentersList,
+        newSectorGroupsList,
       },
     };
   }
@@ -320,7 +442,12 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
     }
 
     if (projects.length > 0 && Object.keys(workCenterTotalHoursMap).length > 0) {
-      const workCenters: WorkCenter[] = Object.keys(workCenterTotalHoursMap).map((wcName, idx) => {
+      const finalWorkCenters = [...baseWcs];
+      const finalSectorGroups = new Set<string>([...baseGroups]);
+      const newWorkCentersList: string[] = [];
+      const newSectorGroupsList: string[] = [];
+
+      Object.keys(workCenterTotalHoursMap).forEach((wcName) => {
         const wcHours = workCenterTotalHoursMap[wcName];
         let defaultResources = 1;
         if (wcHours > 50000) defaultResources = 25;
@@ -329,31 +456,50 @@ export function analyzeAndParseJson(rawInput: string): ParsedJsonResult {
         else if (wcHours > 3000) defaultResources = 3;
         else if (wcHours > 1000) defaultResources = 2;
 
-        return {
-          id: `wc-${idx + 1}-${wcName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-          name: wcName,
-          dailyHours: 8,
-          daysPerWeek: 5,
-          resourcesCount: defaultResources,
-          efficiencyPercentage: 100,
-          category: initialCategorySeed(wcName),
-        };
+        const cat = initialCategorySeed(wcName);
+        if (!finalSectorGroups.has(cat)) {
+          newSectorGroupsList.push(cat);
+          finalSectorGroups.add(cat);
+        }
+
+        const exists = finalWorkCenters.some(
+          (w) => w.name.toUpperCase() === wcName.toUpperCase()
+        );
+
+        if (!exists) {
+          finalWorkCenters.push({
+            id: `wc-${Date.now()}-${wcName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Math.random().toString(36).substring(2, 5)}`,
+            name: wcName,
+            dailyHours: 8,
+            daysPerWeek: 5,
+            resourcesCount: defaultResources,
+            efficiencyPercentage: 100,
+            category: cat,
+          });
+          newWorkCentersList.push(wcName);
+        }
       });
+
+      const compiledSectorGroups = Array.from(finalSectorGroups);
 
       return {
         success: true,
         detectedFormat: 'legacy_erp',
         formatDescription: 'Matriz ERP Simples de Carga por Projeto',
-        workCenters,
+        workCenters: finalWorkCenters,
         projects,
-        sectorGroups: DEFAULT_SECTOR_GROUPS,
+        sectorGroups: compiledSectorGroups,
         stats: {
           projectsCount: projects.length,
-          workCentersCount: workCenters.length,
-          sectorGroupsCount: DEFAULT_SECTOR_GROUPS.length,
+          workCentersCount: finalWorkCenters.length,
+          sectorGroupsCount: compiledSectorGroups.length,
           scenariosCount: 1,
           totalHours: Math.round(totalHours),
           hasGroupDates: false,
+          newWorkCentersCount: newWorkCentersList.length,
+          newSectorGroupsCount: newSectorGroupsList.length,
+          newWorkCentersList,
+          newSectorGroupsList,
         },
       };
     }

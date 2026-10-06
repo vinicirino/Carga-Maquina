@@ -5,6 +5,7 @@ import { getInitialScenarios } from './data/initialScenarios';
 import { DEFAULT_CALENDAR_EXCEPTIONS } from './data/defaultCalendar';
 import { generateWeeklySchedule } from './utils/calculator';
 import { sanitizeProjectSchedules } from './utils/dateValidation';
+import { initialCategorySeed } from './utils/categoryHelper';
 import { Sidebar } from './components/Sidebar';
 import { KPIs } from './components/KPIs';
 import { OverviewDashboard } from './components/OverviewDashboard';
@@ -1177,14 +1178,84 @@ export default function App() {
   };
 
   const handleAddProject = async (newProject: Project) => {
-    const cleanProject = sanitizeProjectSchedules(newProject, workCenters);
+    // Check if newProject references any work centers or sector groups not yet in the base
+    const extraWcs: WorkCenter[] = [];
+    const extraGroups = new Set<string>(sectorGroups);
+    let hasNewWcs = false;
+    let hasNewGroups = false;
+
+    if (newProject.workCenterHours) {
+      Object.entries(newProject.workCenterHours).forEach(([rawKey, hrs]) => {
+        if (hrs > 0) {
+          const exists = workCenters.some(
+            (w) =>
+              w.id.trim().toUpperCase() === rawKey.trim().toUpperCase() ||
+              w.name.trim().toUpperCase() === rawKey.trim().toUpperCase()
+          );
+          if (!exists) {
+            const cat = initialCategorySeed(rawKey);
+            extraGroups.add(cat);
+            extraWcs.push({
+              id: `wc-${Date.now()}-${rawKey.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Math.random().toString(36).substring(2, 5)}`,
+              name: rawKey.trim().toUpperCase(),
+              category: cat,
+              dailyHours: 8,
+              daysPerWeek: 5,
+              resourcesCount: 1,
+              efficiencyPercentage: 100,
+              enabled: true,
+            });
+            hasNewWcs = true;
+          }
+        }
+      });
+    }
+
+    if (newProject.groupDates) {
+      Object.keys(newProject.groupDates).forEach((grp) => {
+        const cat = grp.trim().toUpperCase();
+        if (cat && !extraGroups.has(cat)) {
+          extraGroups.add(cat);
+          hasNewGroups = true;
+        }
+      });
+    }
+
+    const mergedWcs = hasNewWcs ? [...workCenters, ...extraWcs] : workCenters;
+    const finalGroups = Array.from(extraGroups);
+
+    if (hasNewWcs) setWorkCenters(mergedWcs);
+    if (hasNewGroups || finalGroups.length !== sectorGroups.length) setSectorGroups(finalGroups);
+
+    const cleanProject = sanitizeProjectSchedules(newProject, mergedWcs);
     const next = [...projects, cleanProject];
     setProjects(next);
-    const updatedScenarios = scenarios.map((s) =>
-      s.id === activeScenarioId
-        ? { ...s, projects: next, updatedAt: new Date().toISOString() }
-        : s
-    );
+    const updatedScenarios = scenarios.map((s) => {
+      if (s.id === activeScenarioId) {
+        return {
+          ...s,
+          projects: next,
+          workCenters: mergedWcs,
+          sectorGroups: finalGroups,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      if (hasNewWcs || hasNewGroups) {
+        const sWcs = [...s.workCenters];
+        extraWcs.forEach((ewc) => {
+          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            sWcs.push(ewc);
+          }
+        });
+        return {
+          ...s,
+          workCenters: sWcs,
+          sectorGroups: finalGroups,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return s;
+    });
     setScenarios(updatedScenarios);
 
     if (isSupabaseConfigured) {
@@ -1192,9 +1263,17 @@ export default function App() {
         const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
         await Promise.all([
           SupabaseService.saveProject(cleanProject),
+          hasNewWcs ? SupabaseService.saveAllWorkCenters(mergedWcs, false) : Promise.resolve(),
+          hasNewGroups || finalGroups.length !== sectorGroups.length
+            ? SupabaseService.saveSystemState('sector_groups', finalGroups)
+            : Promise.resolve(),
           activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
         ]);
-        showToast(`✅ Projeto "${cleanProject.name}" salvo no Supabase!`, 'success');
+        const newRegMsg =
+          hasNewWcs || hasNewGroups
+            ? ` (${hasNewWcs ? `${extraWcs.length} novo(s) centro(s) ` : ''}${hasNewGroups ? 'novo(s) grupo(s) ' : ''}cadastrado(s) na base!)`
+            : '';
+        showToast(`✅ Projeto "${cleanProject.name}" salvo no Supabase!${newRegMsg}`, 'success');
       } catch (err: any) {
         console.error('Erro ao salvar projeto no Supabase:', err);
         showToast(`Aviso: Projeto cadastrado localmente. Erro no Supabase: ${err.message}`, 'info');
@@ -1219,6 +1298,29 @@ export default function App() {
       ? newSectorGroups
       : DEFAULT_SECTOR_GROUPS;
 
+    // Merge incoming work centers with existing base work centers to prevent loss and register additions
+    const mergedWcs = [...workCenters];
+    const extraWcs: WorkCenter[] = [];
+    newWcs.forEach((w) => {
+      const exists = mergedWcs.some(
+        (mw) => mw.id.trim().toUpperCase() === w.id.trim().toUpperCase() ||
+                mw.name.trim().toUpperCase() === w.name.trim().toUpperCase()
+      );
+      if (!exists) {
+        mergedWcs.push(w);
+        extraWcs.push(w);
+      }
+    });
+
+    // Merge incoming sector groups with existing sector groups
+    const finalGroups = Array.from(new Set([...sectorGroups, ...validatedGroups]));
+    const hasNewWcs = extraWcs.length > 0;
+    const hasNewGroups = finalGroups.length > sectorGroups.length;
+
+    const registrationNotice = hasNewWcs || hasNewGroups
+      ? ` (${hasNewWcs ? `${extraWcs.length} novo(s) centro(s) ` : ''}${hasNewGroups ? 'novo(s) grupo(s) ' : ''}cadastrado(s) na base!)`
+      : '';
+
     if (mode === 'replace_all_scenarios' && newScenarios && newScenarios.length > 0) {
       setScenarios(newScenarios);
       const targetId = newActiveId || newScenarios[0]?.id;
@@ -1226,14 +1328,14 @@ export default function App() {
       const activeTarget = newScenarios.find((s) => s.id === targetId) || newScenarios[0];
       setWorkCenters(activeTarget.workCenters);
       setProjects(activeTarget.projects);
-      setSectorGroups(activeTarget.sectorGroups || validatedGroups);
+      setSectorGroups(activeTarget.sectorGroups || finalGroups);
 
       saveAppSessionCache({
         scenarios: newScenarios,
         activeScenarioId: targetId,
         workCenters: activeTarget.workCenters,
         projects: activeTarget.projects,
-        sectorGroups: activeTarget.sectorGroups || validatedGroups,
+        sectorGroups: activeTarget.sectorGroups || finalGroups,
       });
 
       if (isSupabaseConfigured) {
@@ -1243,44 +1345,65 @@ export default function App() {
           await Promise.all([
             SupabaseService.saveAllScenarios(newScenarios),
             SupabaseService.saveSystemState('active_scenario_id', targetId),
-            SupabaseService.saveAllWorkCenters(activeTarget.workCenters),
+            SupabaseService.saveAllWorkCenters(activeTarget.workCenters, false),
             SupabaseService.saveAllProjects(activeTarget.projects),
-            SupabaseService.saveSystemState('sector_groups', activeTarget.sectorGroups || validatedGroups),
+            SupabaseService.saveSystemState('sector_groups', activeTarget.sectorGroups || finalGroups),
           ]);
+          showToast(`📦 Pacote com ${newScenarios.length} cenários restaurado com sucesso!${registrationNotice}`, 'success');
         } catch (err: any) {
           console.error('Erro ao salvar cenários importados no Supabase:', err);
+          showToast(`Erro ao restaurar cenários no Supabase: ${err.message}`, 'info');
         } finally {
           setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
+      } else {
+        showToast(`📦 Pacote com ${newScenarios.length} cenários restaurado com sucesso!${registrationNotice}`, 'success');
       }
       return;
     }
 
     if (mode === 'create_new_scenario') {
-      const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
+      const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, mergedWcs));
       const newScen: PlanningScenario = {
         id: `scen-${Date.now()}`,
         name: scenarioName || 'Cenário Importado',
-        description: `Importado em ${new Date().toLocaleDateString('pt-BR')} via JSON Estrutura v2.0`,
+        description: `Importado em ${new Date().toLocaleDateString('pt-BR')} via JSON (${sanitizedProjects.length} projetos)`,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        workCenters: newWcs,
+        workCenters: mergedWcs,
         projects: sanitizedProjects,
-        sectorGroups: validatedGroups,
+        sectorGroups: finalGroups,
       };
-      const nextScens = [...scenarios, newScen];
+
+      // Propagate new work centers & groups to existing scenarios so base remains unified
+      const updatedExistingScens = scenarios.map((s) => {
+        const sWcs = [...s.workCenters];
+        extraWcs.forEach((ewc) => {
+          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            sWcs.push(ewc);
+          }
+        });
+        return {
+          ...s,
+          workCenters: sWcs,
+          sectorGroups: finalGroups,
+        };
+      });
+
+      const nextScens = [...updatedExistingScens, newScen];
       setScenarios(nextScens);
       setActiveScenarioId(newScen.id);
-      setWorkCenters(newWcs);
+      setWorkCenters(mergedWcs);
       setProjects(sanitizedProjects);
-      setSectorGroups(validatedGroups);
+      setSectorGroups(finalGroups);
+      setActiveTab('projects');
 
       saveAppSessionCache({
         scenarios: nextScens,
         activeScenarioId: newScen.id,
-        workCenters: newWcs,
+        workCenters: mergedWcs,
         projects: sanitizedProjects,
-        sectorGroups: validatedGroups,
+        sectorGroups: finalGroups,
       });
 
       if (isSupabaseConfigured) {
@@ -1290,43 +1413,150 @@ export default function App() {
           await Promise.all([
             SupabaseService.saveAllScenarios(nextScens),
             SupabaseService.saveSystemState('active_scenario_id', newScen.id),
-            SupabaseService.saveAllWorkCenters(newWcs),
+            SupabaseService.saveAllWorkCenters(mergedWcs, false),
             SupabaseService.saveAllProjects(sanitizedProjects),
-            SupabaseService.saveSystemState('sector_groups', validatedGroups),
+            SupabaseService.saveSystemState('sector_groups', finalGroups),
           ]);
+          showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!${registrationNotice}`, 'success');
         } catch (err: any) {
           console.error('Erro ao salvar novo cenário importado no Supabase:', err);
+          showToast(`Aviso: Cenário criado localmente. Erro no Supabase: ${err.message}`, 'info');
         } finally {
           setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
+      } else {
+        showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!${registrationNotice}`, 'success');
+      }
+      return;
+    }
+
+    if (mode === 'append_projects') {
+      const sanitizedNewProjects = newProjects.map((p) => sanitizeProjectSchedules(p, mergedWcs));
+      const currentExistingProjects = projects.length > 0 ? projects : (activeScenario?.projects || []);
+      const projectMap = new Map<string, Project>();
+      currentExistingProjects.forEach((p) => {
+        projectMap.set(p.id, sanitizeProjectSchedules(p, mergedWcs));
+      });
+      sanitizedNewProjects.forEach((p) => {
+        let existingId: string | undefined;
+        for (const [id, existingP] of projectMap.entries()) {
+          if (existingP.name.trim().toUpperCase() === p.name.trim().toUpperCase() || id === p.id) {
+            existingId = id;
+            break;
+          }
+        }
+        if (existingId) {
+          projectMap.set(existingId, { ...p, id: existingId });
+        } else {
+          projectMap.set(p.id, p);
+        }
+      });
+      const mergedProjects = Array.from(projectMap.values());
+
+      setWorkCenters(mergedWcs);
+      setProjects(mergedProjects);
+      setSectorGroups(finalGroups);
+      setActiveTab('projects');
+
+      const nextScens = scenarios.map((s) => {
+        if (s.id === activeScenarioId) {
+          return {
+            ...s,
+            workCenters: mergedWcs,
+            projects: mergedProjects,
+            sectorGroups: finalGroups,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        if (hasNewWcs || hasNewGroups) {
+          const sWcs = [...s.workCenters];
+          extraWcs.forEach((ewc) => {
+            if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+              sWcs.push(ewc);
+            }
+          });
+          return {
+            ...s,
+            workCenters: sWcs,
+            sectorGroups: finalGroups,
+          };
+        }
+        return s;
+      });
+      setScenarios(nextScens);
+
+      saveAppSessionCache({
+        scenarios: nextScens,
+        activeScenarioId,
+        workCenters: mergedWcs,
+        projects: mergedProjects,
+        sectorGroups: finalGroups,
+      });
+
+      if (isSupabaseConfigured) {
+        try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
+          await Promise.all([
+            SupabaseService.saveAllScenarios(nextScens),
+            SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
+            SupabaseService.saveAllWorkCenters(mergedWcs, false),
+            SupabaseService.saveAllProjects(mergedProjects),
+            SupabaseService.saveSystemState('sector_groups', finalGroups),
+          ]);
+          showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados à carteira!${registrationNotice}`, 'success');
+        } catch (err: any) {
+          console.error('Erro ao anexar projetos importados no Supabase:', err);
+          showToast(`Aviso: Projetos adicionados localmente. Erro no Supabase: ${err.message}`, 'info');
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
+        }
+      } else {
+        showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados à carteira!${registrationNotice}`, 'success');
       }
       return;
     }
 
     // Default mode: 'replace_current'
-    const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
-    setWorkCenters(newWcs);
+    const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, mergedWcs));
+    setWorkCenters(mergedWcs);
     setProjects(sanitizedProjects);
-    setSectorGroups(validatedGroups);
-    const nextScens = scenarios.map((s) =>
-      s.id === activeScenarioId
-        ? {
-            ...s,
-            workCenters: newWcs,
-            projects: sanitizedProjects,
-            sectorGroups: validatedGroups,
-            updatedAt: new Date().toISOString(),
+    setSectorGroups(finalGroups);
+    setActiveTab('projects');
+
+    const nextScens = scenarios.map((s) => {
+      if (s.id === activeScenarioId) {
+        return {
+          ...s,
+          workCenters: mergedWcs,
+          projects: sanitizedProjects,
+          sectorGroups: finalGroups,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      if (hasNewWcs || hasNewGroups) {
+        const sWcs = [...s.workCenters];
+        extraWcs.forEach((ewc) => {
+          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            sWcs.push(ewc);
           }
-        : s
-    );
+        });
+        return {
+          ...s,
+          workCenters: sWcs,
+          sectorGroups: finalGroups,
+        };
+      }
+      return s;
+    });
     setScenarios(nextScens);
 
     saveAppSessionCache({
       scenarios: nextScens,
       activeScenarioId,
-      workCenters: newWcs,
+      workCenters: mergedWcs,
       projects: sanitizedProjects,
-      sectorGroups: validatedGroups,
+      sectorGroups: finalGroups,
     });
 
     if (isSupabaseConfigured) {
@@ -1336,15 +1566,19 @@ export default function App() {
         await Promise.all([
           SupabaseService.saveAllScenarios(nextScens),
           SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
-          SupabaseService.saveAllWorkCenters(newWcs),
+          SupabaseService.saveAllWorkCenters(mergedWcs, false),
           SupabaseService.saveAllProjects(sanitizedProjects),
-          SupabaseService.saveSystemState('sector_groups', validatedGroups),
+          SupabaseService.saveSystemState('sector_groups', finalGroups),
         ]);
+        showToast(`✅ Carteira atualizada com ${sanitizedProjects.length} projetos!${registrationNotice}`, 'success');
       } catch (err: any) {
         console.error('Erro ao atualizar cenário corrente importado no Supabase:', err);
+        showToast(`Aviso: Carteira atualizada localmente. Erro no Supabase: ${err.message}`, 'info');
       } finally {
         setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
+    } else {
+      showToast(`✅ Carteira atualizada com ${sanitizedProjects.length} projetos!${registrationNotice}`, 'success');
     }
   };
 
@@ -1362,6 +1596,16 @@ export default function App() {
         ? newSectorGroups
         : DEFAULT_SECTOR_GROUPS;
 
+    const extraWcs = newWcs.filter(
+      (w) => !workCenters.some((cw) => cw.id.toUpperCase() === w.id.toUpperCase() || cw.name.toUpperCase() === w.name.toUpperCase())
+    );
+    const extraGroups = validatedGroups.filter((g) => !sectorGroups.includes(g));
+    const hasNewWcs = extraWcs.length > 0;
+    const hasNewGroups = extraGroups.length > 0;
+    const registrationNotice = hasNewWcs || hasNewGroups
+      ? ` (${hasNewWcs ? `${extraWcs.length} novo(s) centro(s) ` : ''}${hasNewGroups ? 'novo(s) grupo(s) ' : ''}cadastrado(s) na base!)`
+      : '';
+
     if (mode === 'new_scenario') {
       const sanitizedProjects = newProjects.map((p) => sanitizeProjectSchedules(p, newWcs));
       const newScen: PlanningScenario = {
@@ -1374,7 +1618,23 @@ export default function App() {
         projects: sanitizedProjects,
         sectorGroups: validatedGroups,
       };
-      const nextScens = [...scenarios, newScen];
+
+      // Propagate new work centers & groups to existing scenarios
+      const updatedExistingScens = scenarios.map((s) => {
+        const sWcs = [...s.workCenters];
+        extraWcs.forEach((ewc) => {
+          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            sWcs.push(ewc);
+          }
+        });
+        return {
+          ...s,
+          workCenters: sWcs,
+          sectorGroups: validatedGroups,
+        };
+      });
+
+      const nextScens = [...updatedExistingScens, newScen];
       setScenarios(nextScens);
       setActiveScenarioId(newScen.id);
       setWorkCenters(newWcs);
@@ -1397,11 +1657,11 @@ export default function App() {
           await Promise.all([
             SupabaseService.saveAllScenarios(nextScens),
             SupabaseService.saveSystemState('active_scenario_id', newScen.id),
-            SupabaseService.saveAllWorkCenters(newWcs),
+            SupabaseService.saveAllWorkCenters(newWcs, false),
             SupabaseService.saveAllProjects(sanitizedProjects),
             SupabaseService.saveSystemState('sector_groups', validatedGroups),
           ]);
-          showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!`, 'success');
+          showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!${registrationNotice}`, 'success');
         } catch (err: any) {
           console.error('Erro ao salvar planilha no Supabase:', err);
           showToast(`Aviso: Cenário criado localmente. Erro no Supabase: ${err.message}`, 'info');
@@ -1409,7 +1669,7 @@ export default function App() {
           setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       } else {
-        showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!`, 'success');
+        showToast(`✅ Novo Cenário "${newScen.name}" criado com ${sanitizedProjects.length} projetos!${registrationNotice}`, 'success');
       }
       return;
     }
@@ -1419,17 +1679,32 @@ export default function App() {
       setWorkCenters(newWcs);
       setProjects(sanitizedProjects);
       setSectorGroups(validatedGroups);
-      const nextScens = scenarios.map((s) =>
-        s.id === activeScenarioId
-          ? {
-              ...s,
-              workCenters: newWcs,
-              projects: sanitizedProjects,
-              sectorGroups: validatedGroups,
-              updatedAt: new Date().toISOString(),
+
+      const nextScens = scenarios.map((s) => {
+        if (s.id === activeScenarioId) {
+          return {
+            ...s,
+            workCenters: newWcs,
+            projects: sanitizedProjects,
+            sectorGroups: validatedGroups,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        if (hasNewWcs || hasNewGroups) {
+          const sWcs = [...s.workCenters];
+          extraWcs.forEach((ewc) => {
+            if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+              sWcs.push(ewc);
             }
-          : s
-      );
+          });
+          return {
+            ...s,
+            workCenters: sWcs,
+            sectorGroups: validatedGroups,
+          };
+        }
+        return s;
+      });
       setScenarios(nextScens);
       setActiveTab('projects');
 
@@ -1448,11 +1723,11 @@ export default function App() {
           await Promise.all([
             SupabaseService.saveAllScenarios(nextScens),
             SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
-            SupabaseService.saveAllWorkCenters(newWcs),
+            SupabaseService.saveAllWorkCenters(newWcs, false),
             SupabaseService.saveAllProjects(sanitizedProjects),
             SupabaseService.saveSystemState('sector_groups', validatedGroups),
           ]);
-          showToast(`✅ Carteira substituída por ${sanitizedProjects.length} projetos da planilha!`, 'success');
+          showToast(`✅ Carteira substituída por ${sanitizedProjects.length} projetos da planilha!${registrationNotice}`, 'success');
         } catch (err: any) {
           console.error('Erro ao atualizar projetos importados no Supabase:', err);
           showToast(`Aviso: Projetos atualizados localmente. Erro no Supabase: ${err.message}`, 'info');
@@ -1460,7 +1735,7 @@ export default function App() {
           setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       } else {
-        showToast(`✅ Carteira substituída por ${sanitizedProjects.length} projetos da planilha!`, 'success');
+        showToast(`✅ Carteira substituída por ${sanitizedProjects.length} projetos da planilha!${registrationNotice}`, 'success');
       }
       return;
     }
@@ -1493,17 +1768,32 @@ export default function App() {
     setWorkCenters(newWcs);
     setProjects(mergedProjects);
     setSectorGroups(validatedGroups);
-    const nextScens = scenarios.map((s) =>
-      s.id === activeScenarioId
-        ? {
-            ...s,
-            workCenters: newWcs,
-            projects: mergedProjects,
-            sectorGroups: validatedGroups,
-            updatedAt: new Date().toISOString(),
+
+    const nextScens = scenarios.map((s) => {
+      if (s.id === activeScenarioId) {
+        return {
+          ...s,
+          workCenters: newWcs,
+          projects: mergedProjects,
+          sectorGroups: validatedGroups,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      if (hasNewWcs || hasNewGroups) {
+        const sWcs = [...s.workCenters];
+        extraWcs.forEach((ewc) => {
+          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            sWcs.push(ewc);
           }
-        : s
-    );
+        });
+        return {
+          ...s,
+          workCenters: sWcs,
+          sectorGroups: validatedGroups,
+        };
+      }
+      return s;
+    });
     setScenarios(nextScens);
     setActiveTab('projects');
 
@@ -1522,11 +1812,11 @@ export default function App() {
         await Promise.all([
           SupabaseService.saveAllScenarios(nextScens),
           SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
-          SupabaseService.saveAllWorkCenters(newWcs),
+          SupabaseService.saveAllWorkCenters(newWcs, false),
           SupabaseService.saveAllProjects(mergedProjects),
           SupabaseService.saveSystemState('sector_groups', validatedGroups),
         ]);
-        showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados ao cenário com sucesso!`, 'success');
+        showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados ao cenário com sucesso!${registrationNotice}`, 'success');
       } catch (err: any) {
         console.error('Erro ao anexar projetos importados no Supabase:', err);
         showToast(`Aviso: Projetos adicionados localmente. Erro no Supabase: ${err.message}`, 'info');
@@ -1534,7 +1824,7 @@ export default function App() {
         setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
     } else {
-      showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados ao cenário com sucesso!`, 'success');
+      showToast(`✅ ${sanitizedNewProjects.length} projetos adicionados ao cenário com sucesso!${registrationNotice}`, 'success');
     }
   };
 
@@ -1633,6 +1923,24 @@ export default function App() {
         ? scenario.calendarExceptions
         : calendarExceptions;
 
+      const mergedWcs = [...workCenters];
+      const extraWcs: WorkCenter[] = [];
+      (scenario.workCenters || []).forEach((w) => {
+        const exists = mergedWcs.some(
+          (mw) => mw.id.toUpperCase() === w.id.toUpperCase() || mw.name.toUpperCase() === w.name.toUpperCase()
+        );
+        if (!exists) {
+          mergedWcs.push(w);
+          extraWcs.push(w);
+        }
+      });
+      const finalGroups = Array.from(new Set([...sectorGroups, ...scenarioGroups]));
+      const hasNewWcs = extraWcs.length > 0;
+      const hasNewGroups = finalGroups.length > sectorGroups.length;
+      const regNotice = hasNewWcs || hasNewGroups
+        ? ` (${hasNewWcs ? `${extraWcs.length} novo(s) centro(s) ` : ''}${hasNewGroups ? 'novo(s) grupo(s) ' : ''}cadastrado(s) na base!)`
+        : '';
+
       if (mode === 'create_new_scenario') {
         const newScen: PlanningScenario = {
           ...scenario,
@@ -1641,25 +1949,40 @@ export default function App() {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           isBaseline: false,
-          sectorGroups: scenarioGroups,
+          workCenters: mergedWcs,
+          sectorGroups: finalGroups,
           calendarExceptions: scenarioCalendar,
         };
 
-        const nextScens = [...scenarios, newScen];
+        const updatedExistingScens = scenarios.map((s) => {
+          const sWcs = [...s.workCenters];
+          extraWcs.forEach((ewc) => {
+            if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+              sWcs.push(ewc);
+            }
+          });
+          return {
+            ...s,
+            workCenters: sWcs,
+            sectorGroups: finalGroups,
+          };
+        });
+
+        const nextScens = [...updatedExistingScens, newScen];
         setScenarios(nextScens);
         setActiveScenarioId(newScen.id);
-        setWorkCenters(newScen.workCenters);
+        setWorkCenters(mergedWcs);
         setProjects(newScen.projects);
-        setSectorGroups(scenarioGroups);
+        setSectorGroups(finalGroups);
         setCalendarExceptions(scenarioCalendar);
-        showToast(`✅ Novo Cenário "${scenarioName}" importado e ativado com sucesso!`);
+        showToast(`✅ Novo Cenário "${scenarioName}" importado e ativado com sucesso!${regNotice}`);
 
         saveAppSessionCache({
           scenarios: nextScens,
           activeScenarioId: newScen.id,
-          workCenters: newScen.workCenters,
+          workCenters: mergedWcs,
           projects: newScen.projects,
-          sectorGroups: scenarioGroups,
+          sectorGroups: finalGroups,
           calendarExceptions: scenarioCalendar,
         });
 
@@ -1670,10 +1993,10 @@ export default function App() {
             await Promise.all([
               SupabaseService.saveAllScenarios(nextScens),
               SupabaseService.saveSystemState('active_scenario_id', newScen.id),
-              SupabaseService.saveAllWorkCenters(newScen.workCenters),
+              SupabaseService.saveAllWorkCenters(mergedWcs, false),
               SupabaseService.saveAllProjects(newScen.projects),
               SupabaseService.saveAllCalendarExceptions(scenarioCalendar),
-              SupabaseService.saveSystemState('sector_groups', scenarioGroups),
+              SupabaseService.saveSystemState('sector_groups', finalGroups),
             ]);
           } catch (err: any) {
             console.error('Erro ao salvar cenário importado no Supabase:', err);
@@ -1685,32 +2008,46 @@ export default function App() {
       }
 
       if (mode === 'replace_current') {
-        setWorkCenters(scenario.workCenters);
+        setWorkCenters(mergedWcs);
         setProjects(scenario.projects);
-        setSectorGroups(scenarioGroups);
+        setSectorGroups(finalGroups);
         setCalendarExceptions(scenarioCalendar);
-        const nextScens = scenarios.map((s) =>
-          s.id === activeScenarioId
-            ? {
-                ...s,
-                name: customScenarioName || s.name,
-                workCenters: scenario.workCenters,
-                projects: scenario.projects,
-                sectorGroups: scenarioGroups,
-                calendarExceptions: scenarioCalendar,
-                updatedAt: new Date().toISOString(),
+        const nextScens = scenarios.map((s) => {
+          if (s.id === activeScenarioId) {
+            return {
+              ...s,
+              name: customScenarioName || s.name,
+              workCenters: mergedWcs,
+              projects: scenario.projects,
+              sectorGroups: finalGroups,
+              calendarExceptions: scenarioCalendar,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          if (hasNewWcs || hasNewGroups) {
+            const sWcs = [...s.workCenters];
+            extraWcs.forEach((ewc) => {
+              if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+                sWcs.push(ewc);
               }
-            : s
-        );
+            });
+            return {
+              ...s,
+              workCenters: sWcs,
+              sectorGroups: finalGroups,
+            };
+          }
+          return s;
+        });
         setScenarios(nextScens);
-        showToast(`✅ Cenário ativo atualizado exatamente com os dados do arquivo importado!`);
+        showToast(`✅ Cenário ativo atualizado exatamente com os dados do arquivo importado!${regNotice}`);
 
         saveAppSessionCache({
           scenarios: nextScens,
           activeScenarioId,
-          workCenters: scenario.workCenters,
+          workCenters: mergedWcs,
           projects: scenario.projects,
-          sectorGroups: scenarioGroups,
+          sectorGroups: finalGroups,
           calendarExceptions: scenarioCalendar,
         });
 
@@ -1721,10 +2058,10 @@ export default function App() {
             await Promise.all([
               SupabaseService.saveAllScenarios(nextScens),
               SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
-              SupabaseService.saveAllWorkCenters(scenario.workCenters),
+              SupabaseService.saveAllWorkCenters(mergedWcs, false),
               SupabaseService.saveAllProjects(scenario.projects),
               SupabaseService.saveAllCalendarExceptions(scenarioCalendar),
-              SupabaseService.saveSystemState('sector_groups', scenarioGroups),
+              SupabaseService.saveSystemState('sector_groups', finalGroups),
             ]);
           } catch (err: any) {
             console.error('Erro ao substituir cenário no Supabase:', err);

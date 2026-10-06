@@ -30,7 +30,7 @@ import {
 } from '../utils/jsonImportExportHelper';
 
 export interface ImportPayload {
-  mode: 'replace_current' | 'create_new_scenario' | 'replace_all_scenarios';
+  mode: 'replace_current' | 'create_new_scenario' | 'replace_all_scenarios' | 'append_projects';
   workCenters: WorkCenter[];
   projects: Project[];
   sectorGroups: string[];
@@ -71,7 +71,7 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
 
   // Import States
   const [importText, setImportText] = useState('');
-  const [importMode, setImportMode] = useState<'replace_current' | 'create_new_scenario' | 'replace_all_scenarios'>('replace_current');
+  const [importMode, setImportMode] = useState<'append_projects' | 'replace_current' | 'create_new_scenario' | 'replace_all_scenarios'>('append_projects');
   const [newScenarioName, setNewScenarioName] = useState('Cenário Importado');
 
   // Generate current export string dynamically based on selections
@@ -97,11 +97,11 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
     activeScenarioId,
   ]);
 
-  // Live analysis of import text
+  // Live analysis of import text with central base awareness
   const parseResult: ParsedJsonResult | null = useMemo(() => {
     if (!importText.trim()) return null;
-    return analyzeAndParseJson(importText);
-  }, [importText]);
+    return analyzeAndParseJson(importText, workCenters, sectorGroups);
+  }, [importText, workCenters, sectorGroups]);
 
   // Automatically update import mode recommendation when format changes
   useEffect(() => {
@@ -109,7 +109,7 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
       setImportMode('replace_all_scenarios');
     } else if (parseResult?.success) {
       if (importMode === 'replace_all_scenarios') {
-        setImportMode('replace_current');
+        setImportMode('append_projects');
       }
     }
   }, [parseResult?.detectedFormat]);
@@ -435,13 +435,64 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
                         </div>
                       </div>
 
+                      {/* Automatic Database Registration Banner */}
+                      {(parseResult.stats.newWorkCentersCount > 0 || parseResult.stats.newSectorGroupsCount > 0) && (
+                        <div className="bg-linear-to-r from-emerald-100/80 to-indigo-100/80 border border-emerald-400 rounded-xl p-3 flex items-start gap-2.5 shadow-2xs">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                          <div className="text-xs text-left space-y-0.5">
+                            <div className="font-black text-emerald-950 flex items-center gap-1.5">
+                              <span>Cadastro Automático na Base Garantido</span>
+                              <span className="px-1.5 py-0.2 text-[9px] bg-emerald-200 text-emerald-900 rounded font-bold uppercase">
+                                Supabase Sincronizado
+                              </span>
+                            </div>
+                            <p className="text-emerald-900 leading-snug text-[11px]">
+                              {parseResult.stats.newWorkCentersCount > 0 && (
+                                <span>
+                                  <strong>{parseResult.stats.newWorkCentersCount}</strong> novo(s) centro(s) de trabalho ({parseResult.stats.newWorkCentersList?.slice(0, 3).join(', ')}{Number(parseResult.stats.newWorkCentersList?.length || 0) > 3 ? '...' : ''})
+                                </span>
+                              )}
+                              {parseResult.stats.newWorkCentersCount > 0 && parseResult.stats.newSectorGroupsCount > 0 && <span> e </span>}
+                              {parseResult.stats.newSectorGroupsCount > 0 && (
+                                <span>
+                                  <strong>{parseResult.stats.newSectorGroupsCount}</strong> novo(s) grupo(s) de trabalho ({parseResult.stats.newSectorGroupsList?.join(', ')})
+                                </span>
+                              )}
+                              {' '}serão devidamente cadastrados e persistidos na base central (Supabase), ficando disponíveis para todos os cenários.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Import Destination Options */}
                       <div className="pt-2 border-t border-emerald-200/80 space-y-2">
                         <div className="text-xs font-bold text-slate-700">
                           Como você deseja aplicar os dados importados?
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <label
+                            className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
+                              importMode === 'append_projects'
+                                ? 'bg-indigo-50/90 border-indigo-400 text-indigo-950 font-medium'
+                                : 'bg-white/90 border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="importMode"
+                              checked={importMode === 'append_projects'}
+                              onChange={() => setImportMode('append_projects')}
+                              className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <div>
+                              <div className="text-xs font-bold">Anexar à Carteira Atual</div>
+                              <div className="text-[11px] text-slate-500">
+                                Adiciona os projetos e cadastra novos centros e grupos na base.
+                              </div>
+                            </div>
+                          </label>
+
                           <label
                             className={`flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition-colors ${
                               importMode === 'replace_current'
@@ -457,9 +508,9 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
                               className="mt-0.5 text-indigo-600 focus:ring-indigo-500"
                             />
                             <div>
-                              <div className="text-xs font-bold">Substituir Cenário Ativo</div>
+                              <div className="text-xs font-bold">Substituir Carteira Atual</div>
                               <div className="text-[11px] text-slate-500">
-                                Atualiza os centros, projetos e agrupadores na visão atual.
+                                Substitui os projetos da visão ativa e cadastra novos centros/grupos.
                               </div>
                             </div>
                           </label>
@@ -481,7 +532,7 @@ export const JsonImportExportModal: React.FC<JsonImportExportModalProps> = ({
                             <div className="flex-1">
                               <div className="text-xs font-bold">Criar como Novo Cenário</div>
                               <div className="text-[11px] text-slate-500">
-                                Mantém os cenários atuais e cria uma nova versão isolada.
+                                Cria uma nova versão isolada com os projetos e centros cadastrados.
                               </div>
                             </div>
                           </label>

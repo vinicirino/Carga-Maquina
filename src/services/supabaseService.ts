@@ -297,11 +297,13 @@ export const SupabaseService = {
     }
   },
 
-  async saveAllWorkCenters(wcs: WorkCenter[]): Promise<void> {
+  async saveAllWorkCenters(wcs: WorkCenter[], syncDeletions: boolean = false): Promise<void> {
     const client = getSupabase();
     if (wcs.length === 0) {
-      const { error } = await client.from('work_centers').delete().neq('id', '___none___');
-      if (error) throw new Error(error.message);
+      if (syncDeletions) {
+        const { error } = await client.from('work_centers').delete().neq('id', '___none___');
+        if (error) throw new Error(error.message);
+      }
       return;
     }
     const rows = wcs.map(mapWorkCenterToRow);
@@ -311,18 +313,31 @@ export const SupabaseService = {
       throw new Error(`Falha ao atualizar centros de trabalho: ${upsertError.message}`);
     }
 
-    // Remover os que foram excluídos de forma segura e garantida
-    try {
-      const { data: existing } = await client.from('work_centers').select('id');
-      if (existing && existing.length > 0) {
-        const keepSet = new Set(wcs.map((w) => w.id));
-        const toDelete = existing.filter((row: any) => !keepSet.has(row.id)).map((row: any) => row.id);
-        if (toDelete.length > 0) {
-          await client.from('work_centers').delete().in('id', toDelete);
+    // Remover os que foram excluídos de forma segura e garantida APENAS se syncDeletions for explicitamente solicitado
+    if (syncDeletions) {
+      try {
+        const { data: existing } = await client.from('work_centers').select('id');
+        if (existing && existing.length > 0) {
+          const keepSet = new Set(wcs.map((w) => w.id));
+          const toDelete = existing.filter((row: any) => !keepSet.has(row.id)).map((row: any) => row.id);
+          if (toDelete.length > 0) {
+            await client.from('work_centers').delete().in('id', toDelete);
+          }
         }
+      } catch (delError) {
+        console.warn('Aviso ao remover centros excluídos:', delError);
       }
-    } catch (delError) {
-      console.warn('Aviso ao remover centros excluídos:', delError);
+    }
+  },
+
+  async registerNewWorkCenters(newWcs: WorkCenter[]): Promise<void> {
+    if (!newWcs || newWcs.length === 0) return;
+    const client = getSupabase();
+    const rows = newWcs.map(mapWorkCenterToRow);
+    const { error: upsertError } = await client.from('work_centers').upsert(rows);
+    if (upsertError) {
+      console.error('Erro ao cadastrar novos centros de trabalho na base:', upsertError);
+      throw new Error(`Falha ao cadastrar novos centros de trabalho na base: ${upsertError.message}`);
     }
   },
 

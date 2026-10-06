@@ -89,8 +89,32 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
   const [globalDurationWeeks, setGlobalDurationWeeks] = useState<number>(16);
   const [globalStaggerWeeks, setGlobalStaggerWeeks] = useState<number>(2);
 
+  // Sector groups state (allowing new groups to be created during import)
+  const [localSectorGroups, setLocalSectorGroups] = useState<string[]>(sectorGroups);
+  const [isCreatingNewGroup, setIsCreatingNewGroup] = useState<boolean>(false);
+  const [newGroupName, setNewGroupName] = useState<string>('');
+  const [targetMappingForNewGroup, setTargetMappingForNewGroup] = useState<string | null>(null);
+
+  // Sync local sector groups with prop and discovered mappings
+  useEffect(() => {
+    setLocalSectorGroups((prev) => Array.from(new Set([...prev, ...sectorGroups])));
+  }, [sectorGroups]);
+
   // Parsed Data state
   const [parsedData, setParsedData] = useState<MatrixParsedData | null>(null);
+
+  // Discover any new categories from column mappings and register them in localSectorGroups
+  useEffect(() => {
+    if (parsedData?.columnMappings) {
+      const allGroups = new Set<string>(localSectorGroups);
+      parsedData.columnMappings.forEach((m) => {
+        if (m.newCenterCategory && m.newCenterCategory.trim()) {
+          allGroups.add(m.newCenterCategory.trim().toUpperCase());
+        }
+      });
+      setLocalSectorGroups(Array.from(allGroups));
+    }
+  }, [parsedData]);
 
   // Mapping filter in Step 3
   const [mappingFilter, setMappingFilter] = useState<'ALL' | 'UNMAPPED' | 'MAPPED'>('ALL');
@@ -100,6 +124,37 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
   const [importDestination, setImportDestination] = useState<'append' | 'replace_projects' | 'new_scenario'>('append');
   const [newScenarioName, setNewScenarioName] = useState('Importação Planilha de Projetos');
 
+  // Discover new work centers and new work groups to register in base
+  const newCentersCount = useMemo(() => {
+    if (!parsedData) return 0;
+    return parsedData.columnMappings.filter((m) => m.action === 'CREATE_NEW').length;
+  }, [parsedData]);
+
+  const newSectorGroupsDiscovered = useMemo(() => {
+    if (!parsedData) return [];
+    const usedCategories = new Set<string>();
+    parsedData.columnMappings.forEach((m) => {
+      if (m.action === 'CREATE_NEW' && m.newCenterCategory) {
+        usedCategories.add(m.newCenterCategory.trim().toUpperCase());
+      }
+    });
+    return Array.from(usedCategories).filter((cat) => !sectorGroups.includes(cat));
+  }, [parsedData, sectorGroups]);
+
+  const handleAddNewSectorGroup = (name: string, targetHeader?: string | null) => {
+    const trimmed = name.trim().toUpperCase();
+    if (!trimmed) return;
+    if (!localSectorGroups.includes(trimmed)) {
+      setLocalSectorGroups((prev) => [...prev, trimmed]);
+    }
+    if (targetHeader && parsedData) {
+      handleUpdateMapping(targetHeader, { newCenterCategory: trimmed });
+    }
+    setNewGroupName('');
+    setIsCreatingNewGroup(false);
+    setTargetMappingForNewGroup(null);
+  };
+
   // Reset wizard to Step 1 whenever modal is opened
   useEffect(() => {
     if (isOpen) {
@@ -107,6 +162,9 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
       setInputText('');
       setFileName(null);
       setParsedData(null);
+      setIsCreatingNewGroup(false);
+      setNewGroupName('');
+      setTargetMappingForNewGroup(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -118,6 +176,9 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
     setParsedData(null);
     setInputText('');
     setFileName(null);
+    setIsCreatingNewGroup(false);
+    setNewGroupName('');
+    setTargetMappingForNewGroup(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -131,7 +192,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
     const parsed = parseMatrixCsvText(
       text,
       workCenters,
-      sectorGroups,
+      localSectorGroups,
       globalTurbineTypeId,
       globalStartDate
     );
@@ -160,7 +221,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
         const parsed = parseMatrixBinaryFile(
           buffer,
           workCenters,
-          sectorGroups,
+          localSectorGroups,
           globalTurbineTypeId,
           globalStartDate
         );
@@ -223,7 +284,7 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
     const compiled = compileMatrixImport(
       parsedData,
       workCenters,
-      sectorGroups,
+      localSectorGroups,
       turbineTypes
     );
 
@@ -734,24 +795,46 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
           {/* STEP 3: WORK CENTER MAPPING & CATEGORIZATION */}
           {step === 3 && parsedData && (
             <div className="space-y-5">
-              {/* Header with Search and Filter */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-                    <span>Mapeamento dos {parsedData.totalColumns} Recursos / Centros de Trabalho</span>
-                    {unmappedCount > 0 && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">
-                        {unmappedCount} novos postos a cadastrar
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Vincule a centros de trabalho já existentes ou cadastre-os como novos centros associando ao agrupador/setor correto.
-                  </p>
+              {/* Header with Search, Filter and Add Work Group */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex flex-wrap items-center gap-2">
+                      <span>Mapeamento dos {parsedData.totalColumns} Recursos / Centros de Trabalho</span>
+                      {newCentersCount > 0 && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold border border-indigo-200">
+                          {newCentersCount} novos centros a cadastrar na base
+                        </span>
+                      )}
+                      {newSectorGroupsDiscovered.length > 0 && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold border border-amber-200">
+                          {newSectorGroupsDiscovered.length} novos grupos a cadastrar ({newSectorGroupsDiscovered.join(', ')})
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Vincule a postos já existentes ou cadastre novos centros e novos grupos de trabalho diretamente na base da fábrica.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTargetMappingForNewGroup(null);
+                        setIsCreatingNewGroup(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer transition-colors"
+                      title="Cadastrar um novo agrupador / grupo de trabalho na base"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Novo Grupo de Trabalho</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="relative w-48">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-200/80">
+                  <div className="relative flex-1 max-w-xs">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                     <input
                       type="text"
@@ -768,11 +851,56 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                     className="text-xs p-1.5 bg-white border border-slate-300 rounded-lg font-bold text-slate-700"
                   >
                     <option value="ALL">Todos ({parsedData.columnMappings.length})</option>
-                    <option value="UNMAPPED">Novos / Não Mapeados ({unmappedCount})</option>
-                    <option value="MAPPED">Vinculados ({parsedData.columnMappings.length - unmappedCount})</option>
+                    <option value="UNMAPPED">Novos a Cadastrar ({newCentersCount})</option>
+                    <option value="MAPPED">Vinculados ({parsedData.columnMappings.length - newCentersCount})</option>
                   </select>
                 </div>
               </div>
+
+              {/* Inline New Work Group Creator */}
+              {isCreatingNewGroup && (
+                <div className="bg-indigo-50/90 border border-indigo-200 p-3.5 rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-xs">
+                  <div className="flex items-center gap-2 flex-1">
+                    <span className="text-xs font-bold text-indigo-900 shrink-0">
+                      Nome do Novo Grupo de Trabalho:
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Ex: LOGÍSTICA, MONTAGEM, ACABAMENTO..."
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddNewSectorGroup(newGroupName, targetMappingForNewGroup);
+                        }
+                      }}
+                      autoFocus
+                      className="flex-1 max-w-sm p-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-bold uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 shadow-2xs"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => handleAddNewSectorGroup(newGroupName, targetMappingForNewGroup)}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-xs shadow-xs cursor-pointer"
+                    >
+                      Adicionar Grupo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingNewGroup(false);
+                        setNewGroupName('');
+                        setTargetMappingForNewGroup(null);
+                      }}
+                      className="px-2.5 py-1.5 text-slate-600 hover:text-slate-800 font-bold text-xs cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Mappings Table */}
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
@@ -792,13 +920,35 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
 
                         return (
                           <tr key={mapping.rawHeader} className="hover:bg-slate-50/80">
-                            {/* Raw Header Name */}
+                            {/* Raw Header Name / Custom Center Name */}
                             <td className="py-2.5 px-3">
-                              <div className="font-bold text-slate-900">{mapping.cleanName}</div>
-                              {isMatch && mapping.matchedWorkCenter && (
-                                <div className="text-[10px] text-emerald-700 flex items-center gap-1 mt-0.5">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  <span>Correspondência automática: {mapping.matchedWorkCenter.name}</span>
+                              {mapping.action === 'CREATE_NEW' ? (
+                                <div className="space-y-1">
+                                  <input
+                                    type="text"
+                                    value={mapping.cleanName}
+                                    onChange={(e) =>
+                                      handleUpdateMapping(mapping.rawHeader, {
+                                        cleanName: e.target.value.toUpperCase(),
+                                      })
+                                    }
+                                    className="w-full p-1 bg-white border border-slate-300 rounded font-bold text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="Nome do Novo Centro"
+                                    title="Editar nome para o cadastro na base"
+                                  />
+                                  <span className="text-[10px] text-indigo-700 font-semibold flex items-center gap-1">
+                                    ✨ Cadastrar como novo centro na base
+                                  </span>
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="font-bold text-slate-900">{mapping.cleanName}</div>
+                                  {isMatch && mapping.matchedWorkCenter && (
+                                    <div className="text-[10px] text-emerald-700 flex items-center gap-1 mt-0.5">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                      <span>Correspondência automática: {mapping.matchedWorkCenter.name}</span>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -849,26 +999,50 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                               )}
 
                               {mapping.action === 'CREATE_NEW' && (
-                                <div className="space-y-1.5">
-                                  <div className="flex items-center gap-2">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5">
                                     <span className="text-[10px] font-bold text-slate-500 shrink-0">Agrupador:</span>
                                     <select
-                                      value={mapping.newCenterCategory || sectorGroups[0] || 'OUTROS'}
-                                      onChange={(e) =>
-                                        handleUpdateMapping(mapping.rawHeader, {
-                                          newCenterCategory: e.target.value,
-                                        })
-                                      }
-                                      className="p-1 bg-white border border-slate-300 rounded font-bold text-xs text-indigo-700 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                      value={mapping.newCenterCategory || localSectorGroups[0] || 'OUTROS'}
+                                      onChange={(e) => {
+                                        if (e.target.value === '__NEW_GROUP__') {
+                                          setTargetMappingForNewGroup(mapping.rawHeader);
+                                          setIsCreatingNewGroup(true);
+                                        } else {
+                                          handleUpdateMapping(mapping.rawHeader, {
+                                            newCenterCategory: e.target.value,
+                                          });
+                                        }
+                                      }}
+                                      className="p-1 bg-white border border-slate-300 rounded font-bold text-xs text-indigo-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 max-w-[150px]"
                                     >
-                                      {sectorGroups.map((g) => (
-                                        <option key={g} value={g}>
-                                          {g}
-                                        </option>
-                                      ))}
-                                      <option value="OUTROS">OUTROS</option>
+                                      {localSectorGroups.map((g) => {
+                                        const isBrandNew = !sectorGroups.includes(g);
+                                        return (
+                                          <option key={g} value={g}>
+                                            {g} {isBrandNew ? '✨ (Novo Grupo)' : ''}
+                                          </option>
+                                        );
+                                      })}
+                                      <option value="__NEW_GROUP__">+ Criar Novo Grupo...</option>
                                     </select>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTargetMappingForNewGroup(mapping.rawHeader);
+                                        setIsCreatingNewGroup(true);
+                                      }}
+                                      className="p-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-xs cursor-pointer"
+                                      title="Criar novo grupo de trabalho"
+                                    >
+                                      <Plus className="w-3 h-3" />
+                                    </button>
                                   </div>
+                                  {!sectorGroups.includes(mapping.newCenterCategory || '') && (
+                                    <span className="inline-block px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 rounded border border-amber-300">
+                                      ✨ Novo Grupo na Base
+                                    </span>
+                                  )}
                                 </div>
                               )}
 
@@ -916,33 +1090,73 @@ export const MatrixImportModal: React.FC<MatrixImportModalProps> = ({
                 </div>
                 <h3 className="text-base font-black text-slate-900">Tudo Pronto para a Importação!</h3>
                 <p className="text-xs text-slate-500">
-                  Revise o resumo das informações que serão integradas ao seu PCP.
+                  Revise o resumo das informações que serão integradas ao seu PCP e cadastradas na base.
                 </p>
               </div>
 
-              {/* Summary Metrics */}
-              <div className="grid grid-cols-3 gap-4 text-center">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+              {/* Automatic Database Registration Banner */}
+              {(newCentersCount > 0 || newSectorGroupsDiscovered.length > 0) && (
+                <div className="bg-linear-to-r from-emerald-50 to-indigo-50 border border-emerald-300 rounded-xl p-3.5 flex items-start gap-3 shadow-2xs">
+                  <div className="p-1.5 bg-emerald-600 text-white rounded-lg shrink-0 mt-0.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div className="text-xs space-y-0.5 text-left">
+                    <div className="font-black text-emerald-950 flex items-center gap-2">
+                      <span>Cadastro Automático na Base Garantido</span>
+                      <span className="px-2 py-0.5 text-[10px] bg-emerald-200/80 text-emerald-900 rounded font-bold uppercase">
+                        Sincronização Ativa
+                      </span>
+                    </div>
+                    <p className="text-emerald-800 leading-relaxed text-[11px]">
+                      {newCentersCount > 0 && (
+                        <span>
+                          <strong>{newCentersCount}</strong> novo(s) centro(s) de trabalho
+                        </span>
+                      )}
+                      {newCentersCount > 0 && newSectorGroupsDiscovered.length > 0 && <span> e </span>}
+                      {newSectorGroupsDiscovered.length > 0 && (
+                        <span>
+                          <strong>{newSectorGroupsDiscovered.length}</strong> novo(s) grupo(s) de trabalho ({newSectorGroupsDiscovered.join(', ')})
+                        </span>
+                      )}
+                      {' '}serão devidamente cadastrados e persistidos na base de dados (Supabase) da empresa, ficando disponíveis para todos os cenários e futuros planejamentos.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Summary Metrics (4 Cards) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Projetos a Importar
+                    Projetos
                   </span>
                   <div className="text-2xl font-black text-slate-900 mt-1">
                     {parsedData.totalProjects}
                   </div>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Novos Centros
                   </span>
                   <div className="text-2xl font-black text-indigo-600 mt-1">
-                    {unmappedCount}
+                    {newCentersCount}
                   </div>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Total de Horas
+                    Novos Grupos
+                  </span>
+                  <div className="text-2xl font-black text-amber-600 mt-1">
+                    {newSectorGroupsDiscovered.length}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Total Horas
                   </span>
                   <div className="text-2xl font-black text-emerald-700 mt-1">
                     {Math.round(parsedData?.totalHoursSum || 0).toLocaleString('pt-BR')} h
