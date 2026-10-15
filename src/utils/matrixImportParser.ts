@@ -96,17 +96,18 @@ export function findMatchingWorkCenter(header: string, workCenters: WorkCenter[]
     const code = codeMatch[1];
     const matchByCode = workCenters.find((wc) => {
       const wcNorm = normalizeString(wc.name);
-      return wcNorm.includes(code) || wc.id.includes(code);
+      const wcCodeMatch = wc.name.match(/^(\d{4,6})\b/);
+      return (wcCodeMatch && wcCodeMatch[1] === code) || wcNorm.startsWith(code) || wc.id.includes(code);
     });
     if (matchByCode) return matchByCode;
   }
 
-  // 3. Substring inclusion
-  const partial = workCenters.find((wc) => {
-    const normWc = normalizeString(wc.name);
-    return normHeader.includes(normWc) || normWc.includes(normHeader);
-  });
-  if (partial) return partial;
+  // 3. Strip bracket prefix if present: e.g. "[USINAGEM] TORNO CNC" -> check if "TORNO CNC" matches
+  const bracketStripped = normHeader.replace(/^\[[^\]]+\]\s*/, '').trim();
+  if (bracketStripped && bracketStripped !== normHeader) {
+    const strippedMatch = workCenters.find((wc) => normalizeString(wc.name) === bracketStripped);
+    if (strippedMatch) return strippedMatch;
+  }
 
   return undefined;
 }
@@ -373,18 +374,37 @@ export function compileMatrixImport(
 
   // Map from rawHeader -> final work center ID
   const headerToWcIdMap: Record<string, string> = {};
+  const registerMap = (hdr: string, id: string) => {
+    headerToWcIdMap[hdr] = id;
+    headerToWcIdMap[hdr.trim()] = id;
+    headerToWcIdMap[hdr.trim().toUpperCase()] = id;
+  };
+
   let newWorkCentersCount = 0;
   let mappedExistingCount = 0;
 
   // 1. Process column mappings (create new work centers or map to existing)
-  for (const mapping of parsedData.columnMappings) {
+  for (let mIdx = 0; mIdx < parsedData.columnMappings.length; mIdx++) {
+    const mapping = parsedData.columnMappings[mIdx];
     if (mapping.action === 'IGNORE') {
       continue;
     }
 
-    if (mapping.action === 'MAP_EXISTING' && mapping.targetWorkCenterId) {
-      headerToWcIdMap[mapping.rawHeader] = mapping.targetWorkCenterId;
-      mappedExistingCount++;
+    if (mapping.action === 'MAP_EXISTING') {
+      const targetId = mapping.targetWorkCenterId || (mapping.matchedWorkCenter ? mapping.matchedWorkCenter.id : undefined);
+      if (targetId) {
+        registerMap(mapping.rawHeader, targetId);
+        mappedExistingCount++;
+      } else {
+        // Fallback: match by cleanName against existing centers
+        const matched = finalWorkCenters.find(
+          (w) => w.name.trim().toUpperCase() === mapping.cleanName.trim().toUpperCase()
+        );
+        if (matched) {
+          registerMap(mapping.rawHeader, matched.id);
+          mappedExistingCount++;
+        }
+      }
     } else if (mapping.action === 'CREATE_NEW') {
       const category = (mapping.newCenterCategory || 'OUTROS').trim().toUpperCase();
       finalSectorGroups.add(category);
@@ -395,10 +415,13 @@ export function compileMatrixImport(
       );
 
       if (existingWc) {
-        headerToWcIdMap[mapping.rawHeader] = existingWc.id;
+        if (mapping.newCenterCategory && existingWc.category !== category) {
+          existingWc.category = category;
+        }
+        registerMap(mapping.rawHeader, existingWc.id);
         mappedExistingCount++;
       } else {
-        const newId = `wc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const newId = `wc-${Date.now()}-${mIdx}-${Math.random().toString(36).substring(2, 6)}`;
         const newWc: WorkCenter = {
           id: newId,
           name: mapping.cleanName.trim().toUpperCase(),
@@ -407,9 +430,10 @@ export function compileMatrixImport(
           daysPerWeek: mapping.newCenterDaysPerWeek || 5,
           resourcesCount: mapping.newCenterResourcesCount || 1,
           efficiencyPercentage: mapping.newCenterEfficiencyPercentage || 85,
+          enabled: true,
         };
         finalWorkCenters.push(newWc);
-        headerToWcIdMap[mapping.rawHeader] = newId;
+        registerMap(mapping.rawHeader, newId);
         newWorkCentersCount++;
       }
     }
@@ -434,12 +458,20 @@ export function compileMatrixImport(
   for (let idx = 0; idx < parsedData.projectRows.length; idx++) {
     const pRow = parsedData.projectRows[idx];
 
-    // Build workCenterHours strictly mapped to unique work center IDs (one entry per center)
+    // Build workCenterHours mapped to both work center ID and clean Name (ensuring 100% compatibility)
     const finalWcHours: Record<string, number> = {};
     for (const [rawHeader, hours] of Object.entries(pRow.workCenterHours)) {
-      const targetWcId = headerToWcIdMap[rawHeader];
+      const targetWcId =
+        headerToWcIdMap[rawHeader] ||
+        headerToWcIdMap[rawHeader.trim()] ||
+        headerToWcIdMap[rawHeader.trim().toUpperCase()];
       if (targetWcId && hours > 0) {
         finalWcHours[targetWcId] = (finalWcHours[targetWcId] || 0) + hours;
+        const targetWc = finalWorkCenters.find((w) => w.id === targetWcId);
+        if (targetWc) {
+          finalWcHours[targetWc.name] = (finalWcHours[targetWc.name] || 0) + hours;
+          finalWcHours[targetWc.name.trim().toUpperCase()] = (finalWcHours[targetWc.name.trim().toUpperCase()] || 0) + hours;
+        }
       }
     }
 

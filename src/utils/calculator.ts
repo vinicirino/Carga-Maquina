@@ -106,7 +106,8 @@ export function calculateEffectiveWeeklyCapacityForBucket(
 export function getWorkCenterAllocatedHours(wc: WorkCenter, projects: Project[]): number {
   const activeProjects = projects.filter((p) => p.enabled !== false);
   let totalHours = 0;
-  const wcNorm = wc.name.trim().toUpperCase();
+  const wcNorm = String(wc.name || '').trim().toUpperCase();
+  const wcIdNorm = String(wc.id || '').trim().toUpperCase();
 
   for (const proj of activeProjects) {
     if (!proj.workCenterHours) continue;
@@ -117,9 +118,12 @@ export function getWorkCenterAllocatedHours(wc: WorkCenter, projects: Project[])
       hrs = proj.workCenterHours[wc.name];
     } else {
       for (const [k, v] of Object.entries(proj.workCenterHours)) {
-        if (typeof v === 'number' && !isNaN(v) && k.trim().toUpperCase() === wcNorm) {
-          hrs = v;
-          break;
+        if (typeof v === 'number' && !isNaN(v)) {
+          const keyNorm = String(k || '').trim().toUpperCase();
+          if (keyNorm === wcNorm || keyNorm === wcIdNorm) {
+            hrs = v;
+            break;
+          }
         }
       }
     }

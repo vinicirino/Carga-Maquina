@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { WorkCenter, Project, CalendarException } from '../types';
 import { TurbineType, SectorCurveConfig } from '../types/turbine';
 import { getWorkCenterCategory } from '../utils/categoryHelper';
@@ -24,6 +24,10 @@ import {
   TrendingUp,
   Palmtree,
   Calendar,
+  Link2,
+  ExternalLink,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
 
 export interface SCurveLinkDetail {
@@ -37,6 +41,9 @@ export interface ProjectLinkDetail {
   projectId: string;
   projectName: string;
   hours: number;
+  startDate?: string;
+  endDate?: string;
+  enabled?: boolean;
 }
 
 interface WorkCenterManagerModalProps {
@@ -70,12 +77,48 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
 }) => {
   const [list, setList] = useState<WorkCenter[]>(workCenters);
   const [newGroupInput, setNewGroupInput] = useState('');
+
+  // Discover all groups across sectorGroups and current work centers
+  const allGroups = useMemo(() => {
+    const set = new Set<string>();
+    sectorGroups.forEach((g) => {
+      if (g && g.trim()) set.add(g.trim().toUpperCase());
+    });
+    list.forEach((wc) => {
+      const cat = getWorkCenterCategory(wc);
+      if (cat && cat.trim()) set.add(cat.trim().toUpperCase());
+    });
+    if (set.size === 0) set.add('OUTROS');
+    return Array.from(set);
+  }, [sectorGroups, list]);
+
   const [newWcName, setNewWcName] = useState('');
   const [newWcCategory, setNewWcCategory] = useState<string>(
-    sectorGroups.length > 0 ? sectorGroups[0] : 'CORTE'
+    allGroups.length > 0 ? allGroups[0] : 'CORTE'
   );
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('ALL');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [selectedLinkFilter, setSelectedLinkFilter] = useState<'ALL' | 'LINKED' | 'UNLINKED'>('ALL');
+  const [viewingLinksWc, setViewingLinksWc] = useState<WorkCenter | null>(null);
+
+  // Keep list continuously synchronized with the central workCenters prop
+  useEffect(() => {
+    setList(workCenters);
+  }, [workCenters, isOpen]);
+
+  // Keep category selector valid when groups change
+  useEffect(() => {
+    if (allGroups.length > 0 && (!newWcCategory || !allGroups.includes(newWcCategory))) {
+      setNewWcCategory(allGroups[0]);
+    }
+  }, [allGroups, newWcCategory]);
+
+  // If selected group filter is deleted, return to ALL
+  useEffect(() => {
+    if (selectedGroupFilter !== 'ALL' && !allGroups.includes(selectedGroupFilter)) {
+      setSelectedGroupFilter('ALL');
+    }
+  }, [allGroups, selectedGroupFilter]);
 
   // Confirmation Alert Dialog when deleting a work center linked to S-Curve / Projects
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
@@ -115,6 +158,8 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     const linkedTurbines: SCurveLinkDetail[] = [];
     const linkedProjects: ProjectLinkDetail[] = [];
     const wcCat = getWorkCenterCategory(wc);
+    const wcNorm = String(wc.name || '').trim().toUpperCase();
+    const wcIdNorm = String(wc.id || '').trim().toUpperCase();
 
     // 1. Scan Turbine Types / S-Curve Models
     turbineTypes.forEach((t) => {
@@ -123,13 +168,25 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
         const sc = rawCfg as SectorCurveConfig;
         if (!sc) return;
         const shares = sc.customWorkCenterShares;
-        const hasCustomShare =
-          shares && (shares[wc.id] !== undefined || shares[wc.name] !== undefined);
+        let shareVal: number | undefined = undefined;
+        if (shares) {
+          if (shares[wc.id] !== undefined) shareVal = shares[wc.id];
+          else if (shares[wc.name] !== undefined) shareVal = shares[wc.name];
+          else {
+            for (const [k, v] of Object.entries(shares)) {
+              const kNorm = String(k || '').trim().toUpperCase();
+              if (kNorm === wcNorm || kNorm === wcIdNorm) {
+                shareVal = v;
+                break;
+              }
+            }
+          }
+        }
+        const hasCustomShare = shareVal !== undefined;
         const isSectorMatch =
           secName.trim().toUpperCase() === wcCat && (sc.percentage || 0) > 0;
 
         if (hasCustomShare) {
-          const shareVal = shares[wc.id] ?? shares[wc.name];
           linkedTurbines.push({
             modelId: t.id,
             modelName: t.name,
@@ -147,20 +204,35 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
       });
     });
 
-    // 2. Scan Projects with Turbine S-Curve Configuration
+    // 2. Scan Projects with Turbine S-Curve Configuration / workCenterHours
     projects.forEach((p) => {
-      const hours =
-        p.workCenterHours?.[wc.name] ||
-        (p.workCenterHours as any)?.[wc.id] ||
-        0;
-      if (hours > 0 || (p.turbineConfig && p.turbineConfig.hoursPerTurbine > 0)) {
-        if (hours > 0) {
-          linkedProjects.push({
-            projectId: p.id,
-            projectName: p.name,
-            hours,
-          });
+      let hours = 0;
+      if (p.workCenterHours) {
+        if (typeof p.workCenterHours[wc.id] === 'number') {
+          hours = p.workCenterHours[wc.id];
+        } else if (typeof p.workCenterHours[wc.name] === 'number') {
+          hours = p.workCenterHours[wc.name];
+        } else {
+          for (const [k, v] of Object.entries(p.workCenterHours)) {
+            if (typeof v === 'number') {
+              const kNorm = String(k || '').trim().toUpperCase();
+              if (kNorm === wcNorm || kNorm === wcIdNorm) {
+                hours = v;
+                break;
+              }
+            }
+          }
         }
+      }
+      if (hours > 0) {
+        linkedProjects.push({
+          projectId: p.id,
+          projectName: p.name,
+          hours,
+          startDate: p.startDate,
+          endDate: p.endDate,
+          enabled: p.enabled !== false,
+        });
       }
     });
 
@@ -186,7 +258,9 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     }
 
     // Direct deletion if no links
-    setList((prev) => prev.filter((w) => w.id !== id));
+    const nextList = list.filter((w) => w.id !== id);
+    setList(nextList);
+    onSaveWorkCenters(nextList);
   };
 
   const handleConfirmDeleteWithSCurveUpdate = () => {
@@ -194,7 +268,9 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     const { wc } = deleteConfirmation;
 
     // 1. Remove from work centers list
-    setList((prev) => prev.filter((w) => w.id !== wc.id));
+    const nextList = list.filter((w) => w.id !== wc.id);
+    setList(nextList);
+    onSaveWorkCenters(nextList);
 
     // 2. Clean up customWorkCenterShares from turbine types if callback exists
     if (onUpdateTurbineTypes && turbineTypes.length > 0) {
@@ -241,7 +317,9 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
       category: cat,
       enabled: true,
     };
-    setList((prev) => [...prev, newWc]);
+    const updated = [...list, newWc];
+    setList(updated);
+    onSaveWorkCenters(updated); // Instantly persist new center so it is visible to project imports and all scenarios
     setNewWcName('');
   };
 
@@ -257,6 +335,9 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     onClose();
   };
 
+  const linkedCount = list.filter((wc) => getSCurveLinks(wc).linkedProjects.length > 0).length;
+  const unlinkedCount = list.length - linkedCount;
+
   const filteredList = list.filter((wc) => {
     if (selectedGroupFilter !== 'ALL' && getWorkCenterCategory(wc) !== selectedGroupFilter) {
       return false;
@@ -265,6 +346,12 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
       return false;
     }
     if (selectedStatusFilter === 'INACTIVE' && wc.enabled !== false) {
+      return false;
+    }
+    if (selectedLinkFilter === 'LINKED' && getSCurveLinks(wc).linkedProjects.length === 0) {
+      return false;
+    }
+    if (selectedLinkFilter === 'UNLINKED' && getSCurveLinks(wc).linkedProjects.length > 0) {
       return false;
     }
     return true;
@@ -407,7 +494,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                 </button>
 
                 {/* Individual Group Badges/Cards */}
-                {sectorGroups.map((group) => {
+                {allGroups.map((group) => {
                   const count = list.filter((wc) => getWorkCenterCategory(wc) === group).length;
                   const isSelected = selectedGroupFilter === group;
 
@@ -503,7 +590,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                     onChange={(e) => setNewWcCategory(e.target.value)}
                     className="text-xs font-bold px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-slate-900 focus:outline-none focus:border-indigo-500 uppercase cursor-pointer"
                   >
-                    {sectorGroups.map((grp) => (
+                    {allGroups.map((grp) => (
                       <option key={grp} value={grp}>
                         {grp}
                       </option>

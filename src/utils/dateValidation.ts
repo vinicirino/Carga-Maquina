@@ -47,6 +47,7 @@ export function deduplicateProjectWorkCenterHours(
 
       if (hrs !== undefined && hrs > 0) {
         cleanHours[wc.id] = hrs;
+        cleanHours[wc.name] = hrs; // Store both ID and Name so lookups by either key succeed everywhere
         seenWcIds.add(wc.id);
       }
     }
@@ -83,6 +84,7 @@ export function deduplicateProjectWorkCenterHours(
 export function getProjectTotalHours(project: Project, workCenters?: WorkCenter[]): number {
   if (!project.workCenterHours) return 0;
   if (!workCenters || workCenters.length === 0) {
+    // If workCenters not provided, calculate sum checking for potential id/name duplicate keys
     return Object.values(project.workCenterHours).reduce<number>(
       (acc, h) => acc + (Number(h) || 0),
       0

@@ -994,8 +994,18 @@ export default function App() {
       );
       setScenarios(updatedScenarios);
 
+      saveAppSessionCache({
+        scenarios: updatedScenarios,
+        activeScenarioId,
+        workCenters,
+        projects,
+        sectorGroups: next,
+      });
+
       if (isSupabaseConfigured) {
         try {
+          isSavingRef.current = true;
+          lastLocalSaveTimeRef.current = Date.now();
           const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
           await Promise.all([
             SupabaseService.saveSystemState('sector_groups', next),
@@ -1003,6 +1013,8 @@ export default function App() {
           ]);
         } catch (err: any) {
           console.error('Erro ao salvar agrupadores no Supabase:', err);
+        } finally {
+          setTimeout(() => { isSavingRef.current = false; }, 3500);
         }
       }
     }
@@ -1027,8 +1039,18 @@ export default function App() {
     );
     setScenarios(updatedScenarios);
 
+    saveAppSessionCache({
+      scenarios: updatedScenarios,
+      activeScenarioId,
+      workCenters: nextWcs,
+      projects,
+      sectorGroups: nextGroups,
+    });
+
     if (isSupabaseConfigured) {
       try {
+        isSavingRef.current = true;
+        lastLocalSaveTimeRef.current = Date.now();
         const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
         await Promise.all([
           SupabaseService.saveSystemState('sector_groups', nextGroups),
@@ -1037,6 +1059,8 @@ export default function App() {
         ]);
       } catch (err: any) {
         console.error('Erro ao excluir agrupador no Supabase:', err);
+      } finally {
+        setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
     }
   };
@@ -1113,17 +1137,29 @@ export default function App() {
     );
     setScenarios(updatedScenarios);
 
+    saveAppSessionCache({
+      scenarios: updatedScenarios,
+      activeScenarioId,
+      workCenters: newWcs,
+      projects,
+      sectorGroups,
+    });
+
     if (isSupabaseConfigured) {
       try {
+        isSavingRef.current = true;
+        lastLocalSaveTimeRef.current = Date.now();
         const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
         await Promise.all([
-          SupabaseService.saveAllWorkCenters(newWcs),
+          SupabaseService.saveAllWorkCenters(newWcs, true),
           activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
         ]);
         showToast(`✅ ${newWcs.length} centros de trabalho salvos e sincronizados no Supabase!`, 'success');
       } catch (err: any) {
         console.error('Erro ao salvar centros de trabalho no Supabase:', err);
         showToast(`Erro ao sincronizar centros de trabalho: ${err.message}`, 'info');
+      } finally {
+        setTimeout(() => { isSavingRef.current = false; }, 3500);
       }
     }
   };
@@ -1596,8 +1632,16 @@ export default function App() {
         ? newSectorGroups
         : DEFAULT_SECTOR_GROUPS;
 
+    const matchWc = (a: any, b: any) => {
+      const aId = String(a?.id || '').trim().toUpperCase();
+      const bId = String(b?.id || '').trim().toUpperCase();
+      const aName = String(a?.name || '').trim().toUpperCase();
+      const bName = String(b?.name || '').trim().toUpperCase();
+      return (aId && bId && aId === bId) || (aName && bName && aName === bName);
+    };
+
     const extraWcs = newWcs.filter(
-      (w) => !workCenters.some((cw) => cw.id.toUpperCase() === w.id.toUpperCase() || cw.name.toUpperCase() === w.name.toUpperCase())
+      (w) => !workCenters.some((cw) => matchWc(cw, w))
     );
     const extraGroups = validatedGroups.filter((g) => !sectorGroups.includes(g));
     const hasNewWcs = extraWcs.length > 0;
@@ -1623,7 +1667,7 @@ export default function App() {
       const updatedExistingScens = scenarios.map((s) => {
         const sWcs = [...s.workCenters];
         extraWcs.forEach((ewc) => {
-          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+          if (!sWcs.some((w) => matchWc(w, ewc))) {
             sWcs.push(ewc);
           }
         });
@@ -1693,7 +1737,7 @@ export default function App() {
         if (hasNewWcs || hasNewGroups) {
           const sWcs = [...s.workCenters];
           extraWcs.forEach((ewc) => {
-            if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            if (!sWcs.some((w) => matchWc(w, ewc))) {
               sWcs.push(ewc);
             }
           });
@@ -1769,8 +1813,10 @@ export default function App() {
     setProjects(mergedProjects);
     setSectorGroups(validatedGroups);
 
+    let scenarioFound = false;
     const nextScens = scenarios.map((s) => {
       if (s.id === activeScenarioId) {
+        scenarioFound = true;
         return {
           ...s,
           workCenters: newWcs,
@@ -1782,7 +1828,7 @@ export default function App() {
       if (hasNewWcs || hasNewGroups) {
         const sWcs = [...s.workCenters];
         extraWcs.forEach((ewc) => {
-          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+          if (!sWcs.some((w) => matchWc(w, ewc))) {
             sWcs.push(ewc);
           }
         });
@@ -1794,11 +1840,28 @@ export default function App() {
       }
       return s;
     });
-    setScenarios(nextScens);
+
+    const finalScens = scenarioFound
+      ? nextScens
+      : [
+          ...nextScens,
+          {
+            id: activeScenarioId || `scen-${Date.now()}`,
+            name: activeScenario?.name || 'Cenário Ativo',
+            description: 'Cenário atualizado com projetos importados',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            workCenters: newWcs,
+            projects: mergedProjects,
+            sectorGroups: validatedGroups,
+          },
+        ];
+
+    setScenarios(finalScens);
     setActiveTab('projects');
 
     saveAppSessionCache({
-      scenarios: nextScens,
+      scenarios: finalScens,
       activeScenarioId,
       workCenters: newWcs,
       projects: mergedProjects,
@@ -1810,7 +1873,7 @@ export default function App() {
         isSavingRef.current = true;
         lastLocalSaveTimeRef.current = Date.now();
         await Promise.all([
-          SupabaseService.saveAllScenarios(nextScens),
+          SupabaseService.saveAllScenarios(finalScens),
           SupabaseService.saveSystemState('active_scenario_id', activeScenarioId),
           SupabaseService.saveAllWorkCenters(newWcs, false),
           SupabaseService.saveAllProjects(mergedProjects),
