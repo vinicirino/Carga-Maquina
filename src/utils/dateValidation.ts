@@ -36,18 +36,22 @@ export function deduplicateProjectWorkCenterHours(
       }
       // 3. Try case-insensitive matching
       else {
-        const wcNorm = wc.name.trim().toUpperCase();
-        for (const [k, v] of rawEntries) {
-          if (typeof v === 'number' && !isNaN(v) && v > 0 && k.trim().toUpperCase() === wcNorm) {
-            hrs = v;
-            break;
+        const wcNorm = String(wc?.name || '').trim().toUpperCase();
+        if (wcNorm) {
+          for (const [k, v] of rawEntries) {
+            if (typeof v === 'number' && !isNaN(v) && v > 0 && String(k || '').trim().toUpperCase() === wcNorm) {
+              hrs = v;
+              break;
+            }
           }
         }
       }
 
       if (hrs !== undefined && hrs > 0) {
         cleanHours[wc.id] = hrs;
-        cleanHours[wc.name] = hrs; // Store both ID and Name so lookups by either key succeed everywhere
+        if (wc.name) {
+          cleanHours[wc.name] = hrs; // Store both ID and Name so lookups by either key succeed everywhere
+        }
         seenWcIds.add(wc.id);
       }
     }
@@ -55,8 +59,9 @@ export function deduplicateProjectWorkCenterHours(
     // Keep any non-matching unmapped keys untouched
     for (const [key, hours] of rawEntries) {
       if (typeof hours === 'number' && !isNaN(hours) && hours > 0) {
+        const keyNorm = String(key || '').trim().toUpperCase();
         const isMatched = workCenters.some(
-          (w) => w.id === key || w.name.trim().toUpperCase() === key.trim().toUpperCase()
+          (w) => String(w?.id || '').trim().toUpperCase() === keyNorm || String(w?.name || '').trim().toUpperCase() === keyNorm
         );
         if (!isMatched && !cleanHours[key]) {
           cleanHours[key] = hours;

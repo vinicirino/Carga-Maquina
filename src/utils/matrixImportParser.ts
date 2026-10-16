@@ -397,8 +397,9 @@ export function compileMatrixImport(
         mappedExistingCount++;
       } else {
         // Fallback: match by cleanName against existing centers
+        const cleanNorm = String(mapping?.cleanName || '').trim().toUpperCase();
         const matched = finalWorkCenters.find(
-          (w) => w.name.trim().toUpperCase() === mapping.cleanName.trim().toUpperCase()
+          (w) => String(w?.name || '').trim().toUpperCase() === cleanNorm
         );
         if (matched) {
           registerMap(mapping.rawHeader, matched.id);
@@ -410,8 +411,9 @@ export function compileMatrixImport(
       finalSectorGroups.add(category);
 
       // Check if already in finalWorkCenters
+      const cleanNorm = String(mapping?.cleanName || '').trim().toUpperCase();
       const existingWc = finalWorkCenters.find(
-        (wc) => wc.name.trim().toUpperCase() === mapping.cleanName.trim().toUpperCase()
+        (wc) => String(wc?.name || '').trim().toUpperCase() === cleanNorm
       );
 
       if (existingWc) {

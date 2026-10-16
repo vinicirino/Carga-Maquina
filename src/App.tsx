@@ -5,7 +5,7 @@ import { getInitialScenarios } from './data/initialScenarios';
 import { DEFAULT_CALENDAR_EXCEPTIONS } from './data/defaultCalendar';
 import { generateWeeklySchedule } from './utils/calculator';
 import { sanitizeProjectSchedules } from './utils/dateValidation';
-import { initialCategorySeed } from './utils/categoryHelper';
+import { initialCategorySeed, getWorkCenterCategory } from './utils/categoryHelper';
 import { Sidebar } from './components/Sidebar';
 import { KPIs } from './components/KPIs';
 import { OverviewDashboard } from './components/OverviewDashboard';
@@ -1129,10 +1129,21 @@ export default function App() {
   };
 
   const handleSaveWorkCenters = async (newWcs: WorkCenter[]) => {
+    // Collect all distinct categories from newWcs and add any missing to sectorGroups
+    const allKnownCats = new Set<string>(sectorGroups);
+    newWcs.forEach((w) => {
+      const cat = getWorkCenterCategory(w);
+      if (cat && cat.trim()) allKnownCats.add(cat.trim().toUpperCase());
+    });
+    const finalSectorGroups = Array.from(allKnownCats);
+
     setWorkCenters(newWcs);
+    if (finalSectorGroups.length !== sectorGroups.length) {
+      setSectorGroups(finalSectorGroups);
+    }
     const updatedScenarios = scenarios.map((s) =>
       s.id === activeScenarioId
-        ? { ...s, workCenters: newWcs, updatedAt: new Date().toISOString() }
+        ? { ...s, workCenters: newWcs, sectorGroups: finalSectorGroups, updatedAt: new Date().toISOString() }
         : s
     );
     setScenarios(updatedScenarios);
@@ -1142,7 +1153,7 @@ export default function App() {
       activeScenarioId,
       workCenters: newWcs,
       projects,
-      sectorGroups,
+      sectorGroups: finalSectorGroups,
     });
 
     if (isSupabaseConfigured) {
@@ -1152,6 +1163,7 @@ export default function App() {
         const activeScen = updatedScenarios.find((s) => s.id === activeScenarioId);
         await Promise.all([
           SupabaseService.saveAllWorkCenters(newWcs, true),
+          SupabaseService.saveSystemState('sector_groups', finalSectorGroups),
           activeScen ? SupabaseService.saveScenario(activeScen) : Promise.resolve(),
         ]);
         showToast(`✅ ${newWcs.length} centros de trabalho salvos e sincronizados no Supabase!`, 'success');
@@ -1223,10 +1235,11 @@ export default function App() {
     if (newProject.workCenterHours) {
       Object.entries(newProject.workCenterHours).forEach(([rawKey, hrs]) => {
         if (hrs > 0) {
+          const rawKeyNorm = String(rawKey || '').trim().toUpperCase();
           const exists = workCenters.some(
             (w) =>
-              w.id.trim().toUpperCase() === rawKey.trim().toUpperCase() ||
-              w.name.trim().toUpperCase() === rawKey.trim().toUpperCase()
+              String(w?.id || '').trim().toUpperCase() === rawKeyNorm ||
+              String(w?.name || '').trim().toUpperCase() === rawKeyNorm
           );
           if (!exists) {
             const cat = initialCategorySeed(rawKey);
@@ -1415,7 +1428,7 @@ export default function App() {
       const updatedExistingScens = scenarios.map((s) => {
         const sWcs = [...s.workCenters];
         extraWcs.forEach((ewc) => {
-          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+          if (!sWcs.some((w) => w.id === ewc.id || String(w?.name || '').trim().toUpperCase() === String(ewc?.name || '').trim().toUpperCase())) {
             sWcs.push(ewc);
           }
         });
@@ -1507,7 +1520,7 @@ export default function App() {
         if (hasNewWcs || hasNewGroups) {
           const sWcs = [...s.workCenters];
           extraWcs.forEach((ewc) => {
-            if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+            if (!sWcs.some((w) => w.id === ewc.id || String(w?.name || '').trim().toUpperCase() === String(ewc?.name || '').trim().toUpperCase())) {
               sWcs.push(ewc);
             }
           });
@@ -1573,7 +1586,7 @@ export default function App() {
       if (hasNewWcs || hasNewGroups) {
         const sWcs = [...s.workCenters];
         extraWcs.forEach((ewc) => {
-          if (!sWcs.some((w) => w.id === ewc.id || w.name.toUpperCase() === ewc.name.toUpperCase())) {
+          if (!sWcs.some((w) => w.id === ewc.id || String(w?.name || '').trim().toUpperCase() === String(ewc?.name || '').trim().toUpperCase())) {
             sWcs.push(ewc);
           }
         });
@@ -2524,6 +2537,7 @@ export default function App() {
         onDeleteSectorGroup={handleDeleteSectorGroup}
         onSaveWorkCenters={handleSaveWorkCenters}
         onUpdateTurbineTypes={handleSaveTurbineTypes}
+        onUpdateProject={handleUpdateProject}
       />
 
       <CalendarManagerModal

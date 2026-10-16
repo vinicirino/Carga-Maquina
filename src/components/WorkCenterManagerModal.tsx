@@ -59,6 +59,7 @@ interface WorkCenterManagerModalProps {
   onDeleteSectorGroup: (name: string) => void;
   onSaveWorkCenters: (wcs: WorkCenter[]) => void;
   onUpdateTurbineTypes?: (types: TurbineType[]) => void;
+  onUpdateProject?: (project: Project) => void;
 }
 
 export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
@@ -74,6 +75,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
   onDeleteSectorGroup,
   onSaveWorkCenters,
   onUpdateTurbineTypes,
+  onUpdateProject,
 }) => {
   const [list, setList] = useState<WorkCenter[]>(workCenters);
   const [newGroupInput, setNewGroupInput] = useState('');
@@ -153,6 +155,10 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     );
   };
 
+  const [selectedProjectIdToLink, setSelectedProjectIdToLink] = useState<string>('');
+  const [linkHoursInput, setLinkHoursInput] = useState<number>(100);
+  const [linkSuccessMessage, setLinkSuccessMessage] = useState<string | null>(null);
+
   // Helper to detect all links between a work center and the S-Curve models / Projects
   const getSCurveLinks = (wc: WorkCenter) => {
     const linkedTurbines: SCurveLinkDetail[] = [];
@@ -204,27 +210,63 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
       });
     });
 
-    // 2. Scan Projects with Turbine S-Curve Configuration / workCenterHours
+    // 2. Scan Projects with Turbine S-Curve Configuration / workCenterHours / dates
     projects.forEach((p) => {
       let hours = 0;
+      let isLinked = false;
+
       if (p.workCenterHours) {
         if (typeof p.workCenterHours[wc.id] === 'number') {
           hours = p.workCenterHours[wc.id];
+          isLinked = true;
         } else if (typeof p.workCenterHours[wc.name] === 'number') {
           hours = p.workCenterHours[wc.name];
+          isLinked = true;
         } else {
           for (const [k, v] of Object.entries(p.workCenterHours)) {
             if (typeof v === 'number') {
               const kNorm = String(k || '').trim().toUpperCase();
               if (kNorm === wcNorm || kNorm === wcIdNorm) {
                 hours = v;
+                isLinked = true;
                 break;
               }
             }
           }
         }
       }
-      if (hours > 0) {
+
+      // Check turbine config custom hours if not yet matched
+      if (!isLinked && p.turbineConfig?.customWorkCenterHours) {
+        const customHours = p.turbineConfig.customWorkCenterHours;
+        if (typeof customHours[wc.id] === 'number') {
+          hours = customHours[wc.id];
+          isLinked = true;
+        } else if (typeof customHours[wc.name] === 'number') {
+          hours = customHours[wc.name];
+          isLinked = true;
+        } else {
+          for (const [k, v] of Object.entries(customHours)) {
+            if (typeof v === 'number') {
+              const kNorm = String(k || '').trim().toUpperCase();
+              if (kNorm === wcNorm || kNorm === wcIdNorm) {
+                hours = v;
+                isLinked = true;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Check workCenterDates if project explicitly assigned schedule for this center
+      if (!isLinked && p.workCenterDates) {
+        if (p.workCenterDates[wc.id] || p.workCenterDates[wc.name]) {
+          isLinked = true;
+        }
+      }
+
+      if (isLinked || hours > 0) {
         linkedProjects.push({
           projectId: p.id,
           projectName: p.name,
@@ -237,6 +279,59 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
     });
 
     return { linkedTurbines, linkedProjects };
+  };
+
+  const handleLinkProject = (wc: WorkCenter) => {
+    if (!selectedProjectIdToLink || linkHoursInput < 0 || !onUpdateProject) return;
+    const proj = projects.find((p) => p.id === selectedProjectIdToLink);
+    if (!proj) return;
+    const currentWcHours = { ...(proj.workCenterHours || {}) };
+    currentWcHours[wc.id] = linkHoursInput;
+    currentWcHours[wc.name] = linkHoursInput;
+    const updatedProject: Project = {
+      ...proj,
+      workCenterHours: currentWcHours,
+    };
+    onUpdateProject(updatedProject);
+    setSelectedProjectIdToLink('');
+    setLinkSuccessMessage(`✅ Vínculo criado com sucesso no projeto "${proj.name}" (${linkHoursInput}h)!`);
+    setTimeout(() => setLinkSuccessMessage(null), 3000);
+  };
+
+  const handleUnlinkProject = (wc: WorkCenter, projectId: string) => {
+    if (!onUpdateProject) return;
+    const proj = projects.find((p) => p.id === projectId);
+    if (!proj || !proj.workCenterHours) return;
+    const currentWcHours = { ...proj.workCenterHours };
+    delete currentWcHours[wc.id];
+    delete currentWcHours[wc.name];
+    delete currentWcHours[String(wc.name || '').trim().toUpperCase()];
+    const updatedProject: Project = {
+      ...proj,
+      workCenterHours: currentWcHours,
+    };
+    onUpdateProject(updatedProject);
+    setLinkSuccessMessage(`Vínculo removido do projeto "${proj.name}".`);
+    setTimeout(() => setLinkSuccessMessage(null), 3000);
+  };
+
+  const handleUpdateProjectHours = (wc: WorkCenter, projectId: string, hours: number) => {
+    if (!onUpdateProject || hours < 0) return;
+    const proj = projects.find((p) => p.id === projectId);
+    if (!proj) return;
+    const currentWcHours = { ...(proj.workCenterHours || {}) };
+    if (hours === 0) {
+      delete currentWcHours[wc.id];
+      delete currentWcHours[wc.name];
+    } else {
+      currentWcHours[wc.id] = hours;
+      currentWcHours[wc.name] = hours;
+    }
+    const updatedProject: Project = {
+      ...proj,
+      workCenterHours: currentWcHours,
+    };
+    onUpdateProject(updatedProject);
   };
 
   const handleDelete = (id: string, e?: React.MouseEvent) => {
@@ -668,6 +763,48 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                     )}
                   </div>
 
+                  {/* Link Status Filter */}
+                  <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLinkFilter('ALL')}
+                      className={`px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        selectedLinkFilter === 'ALL'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                      title="Ver todos os centros"
+                    >
+                      Todos Vínculos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLinkFilter('LINKED')}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        selectedLinkFilter === 'LINKED'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-indigo-700 hover:text-indigo-900'
+                      }`}
+                      title="Centros vinculados a pelo menos um projeto ativo"
+                    >
+                      <Link2 className="w-3 h-3" />
+                      <span>Vinculados ({linkedCount})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLinkFilter('UNLINKED')}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-bold cursor-pointer transition-colors ${
+                        selectedLinkFilter === 'UNLINKED'
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'text-amber-800 hover:text-amber-900'
+                      }`}
+                      title="Centros sem vínculo ou sem horas em projetos ativos"
+                    >
+                      <AlertTriangle className="w-3 h-3" />
+                      <span>Sem Vínculo ({unlinkedCount})</span>
+                    </button>
+                  </div>
+
                   {/* Filter Table by Group */}
                   <div className="flex items-center gap-1.5">
                     <Filter className="w-3.5 h-3.5 text-slate-400" />
@@ -677,7 +814,7 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                       className="text-xs font-bold px-2 py-1 bg-slate-50 border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:border-indigo-500 cursor-pointer"
                     >
                       <option value="ALL">Todos os Agrupadores</option>
-                      {sectorGroups.map((grp) => (
+                      {allGroups.map((grp) => (
                         <option key={grp} value={grp}>
                           {grp}
                         </option>
@@ -689,12 +826,13 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
 
               {/* Table Container */}
               <div className="overflow-x-auto overflow-y-auto border border-slate-200 rounded-xl flex-1 max-h-[52vh]">
-                <table className="w-full text-left text-xs min-w-[840px]">
+                <table className="w-full text-left text-xs min-w-[940px]">
                   <thead className="bg-slate-100 text-slate-700 font-bold uppercase tracking-wider sticky top-0 z-10 border-b border-slate-200">
                     <tr>
                       <th className="py-2.5 px-2 text-center w-24 shrink-0">Status</th>
-                      <th className="py-2.5 px-4 min-w-[240px] sm:min-w-[300px]">Centro de Trabalho</th>
+                      <th className="py-2.5 px-4 min-w-[220px] sm:min-w-[260px]">Centro de Trabalho</th>
                       <th className="py-2.5 px-2 min-w-[140px]">Agrupador (Setor)</th>
+                      <th className="py-2.5 px-3 min-w-[180px]">Vínculo com Projetos</th>
                       <th className="py-2.5 px-2 text-center w-20">Horas/Dia</th>
                       <th className="py-2.5 px-2 text-center w-20">Dias/Sem</th>
                       <th className="py-2.5 px-2 text-center w-20">Nº Rec</th>
@@ -714,6 +852,9 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                         : 0;
 
                       const currentCategory = getWorkCenterCategory(wc);
+                      const links = getSCurveLinks(wc);
+                      const allocated = getWorkCenterAllocatedHours(wc, projects);
+                      const hasLinkedProjects = links.linkedProjects.length > 0;
 
                       return (
                         <tr
@@ -749,39 +890,16 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                             </button>
                           </td>
 
-                          <td className="py-2 px-4 min-w-[240px] sm:min-w-[300px]">
-                            <div className="flex items-center gap-1.5 w-full">
-                              <input
-                                type="text"
-                                value={wc.name}
-                                onChange={(e) => handleUpdate(wc.id, 'name', e.target.value)}
-                                title={wc.name}
-                                className={`w-full font-black bg-slate-50/60 hover:bg-white focus:bg-white border border-transparent hover:border-slate-200 focus:border-indigo-500 rounded-md px-2 py-1 focus:outline-none text-xs uppercase transition-colors ${
-                                  isEnabled ? 'text-slate-900' : 'text-slate-500 line-through'
-                                }`}
-                              />
-                              {(() => {
-                                const allocated = getWorkCenterAllocatedHours(wc, projects);
-                                if (allocated > 0) {
-                                  return (
-                                    <span
-                                      className="px-1.5 py-0.5 rounded text-[9px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200 shrink-0"
-                                      title={`Possui ${Math.round(allocated).toLocaleString()}h alocadas em projetos neste cenário`}
-                                    >
-                                      {Math.round(allocated).toLocaleString()}h
-                                    </span>
-                                  );
-                                }
-                                return (
-                                  <span
-                                    className="px-1.5 py-0.5 rounded text-[9px] font-medium text-slate-400 bg-slate-100 shrink-0"
-                                    title="Sem carga alocada no cenário ativo"
-                                  >
-                                    0h
-                                  </span>
-                                );
-                              })()}
-                            </div>
+                          <td className="py-2 px-4 min-w-[220px] sm:min-w-[260px]">
+                            <input
+                              type="text"
+                              value={wc.name}
+                              onChange={(e) => handleUpdate(wc.id, 'name', e.target.value)}
+                              title={wc.name}
+                              className={`w-full font-black bg-slate-50/60 hover:bg-white focus:bg-white border border-transparent hover:border-slate-200 focus:border-indigo-500 rounded-md px-2 py-1 focus:outline-none text-xs uppercase transition-colors ${
+                                isEnabled ? 'text-slate-900' : 'text-slate-500 line-through'
+                              }`}
+                            />
                           </td>
 
                           <td className="py-2 px-2">
@@ -790,12 +908,40 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
                               onChange={(e) => handleUpdate(wc.id, 'category', e.target.value)}
                               className="text-xs font-black text-indigo-950 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-indigo-500 cursor-pointer uppercase"
                             >
-                              {sectorGroups.map((grp) => (
+                              {allGroups.map((grp) => (
                                 <option key={grp} value={grp}>
                                   {grp}
                                 </option>
                               ))}
                             </select>
+                          </td>
+
+                          {/* Link Status & Allocation Badge (Clickable to manage links) */}
+                          <td className="py-2 px-3">
+                            <button
+                              type="button"
+                              onClick={() => setViewingLinksWc(wc)}
+                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer border shadow-2xs ${
+                                hasLinkedProjects
+                                  ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200 hover:border-indigo-300'
+                                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200 hover:border-amber-300'
+                              }`}
+                              title="Clique para ver os projetos vinculados ou vincular a novos projetos"
+                            >
+                              {hasLinkedProjects ? (
+                                <>
+                                  <Link2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                  <span>{links.linkedProjects.length} proj ({Math.round(allocated).toLocaleString()}h)</span>
+                                  <ExternalLink className="w-3 h-3 text-indigo-400 shrink-0 opacity-70" />
+                                </>
+                              ) : (
+                                <>
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                  <span>Sem Vínculo (0h)</span>
+                                  <Plus className="w-3 h-3 text-amber-700 shrink-0 ml-0.5" />
+                                </>
+                              )}
+                            </button>
                           </td>
 
                           <td className="py-2 px-2 text-center">
@@ -1030,6 +1176,221 @@ export const WorkCenterManagerModal: React.FC<WorkCenterManagerModalProps> = ({
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* WORK CENTER PROJECT & S-CURVE LINK MANAGER MODAL                         */}
+      {/* ========================================================================= */}
+      {viewingLinksWc && (() => {
+        const links = getSCurveLinks(viewingLinksWc);
+        const allocated = getWorkCenterAllocatedHours(viewingLinksWc, projects);
+        const currentCategory = getWorkCenterCategory(viewingLinksWc);
+        const availableProjectsToLink = projects.filter(
+          (p) => !links.linkedProjects.some((lp) => lp.projectId === p.id)
+        );
+
+        return (
+          <div className="fixed inset-0 z-60 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4">
+            <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full shadow-2xl flex flex-col max-h-[88vh] text-slate-900 animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+              {/* Header */}
+              <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between bg-slate-50/70">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 border border-indigo-200 flex items-center justify-center font-bold shrink-0">
+                    <Link2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                      <span>Vínculos do Centro: {viewingLinksWc.name}</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-0.5 rounded font-extrabold uppercase">
+                        {currentCategory}
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Gerencie a vinculação deste centro com projetos ativos e visualize a integração com a Curva S.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewingLinksWc(null);
+                    setLinkSuccessMessage(null);
+                  }}
+                  className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-200 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-5 overflow-y-auto space-y-4 text-xs">
+                {linkSuccessMessage && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-2.5 rounded-xl font-bold flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{linkSuccessMessage}</span>
+                  </div>
+                )}
+
+                {/* KPI Metrics */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Horas Alocadas</span>
+                    <div className="text-base font-black text-indigo-700 mt-0.5">
+                      {Math.round(allocated).toLocaleString()} h
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Projetos Vinculados</span>
+                    <div className="text-base font-black text-slate-900 mt-0.5">
+                      {links.linkedProjects.length}
+                    </div>
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Modelos de Curva S</span>
+                    <div className="text-base font-black text-slate-900 mt-0.5">
+                      {links.linkedTurbines.length}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Form: Vincular a um Novo Projeto */}
+                {onUpdateProject && (
+                  <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center gap-2 text-indigo-900 font-bold">
+                      <Plus className="w-4 h-4 text-indigo-600" />
+                      <span>Vincular este Centro a um Projeto Existente:</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <select
+                        value={selectedProjectIdToLink}
+                        onChange={(e) => setSelectedProjectIdToLink(e.target.value)}
+                        className="flex-1 p-2 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="">-- Selecione o Projeto --</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} {links.linkedProjects.some((lp) => lp.projectId === p.id) ? '*(já vinculado)' : ''}
+                          </option>
+                        ))}
+                      </select>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-slate-600 font-bold">Horas:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          step={10}
+                          value={linkHoursInput}
+                          onChange={(e) => setLinkHoursInput(Math.max(1, parseInt(e.target.value, 10) || 0))}
+                          className="w-20 p-1.5 bg-white border border-indigo-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleLinkProject(viewingLinksWc)}
+                          disabled={!selectedProjectIdToLink}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded-lg font-bold transition-colors cursor-pointer disabled:cursor-not-allowed shadow-xs"
+                        >
+                          Vincular
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Section: Projetos Atualmente Vinculados */}
+                <div className="space-y-2">
+                  <span className="font-black text-slate-800 uppercase tracking-wider text-[11px] flex items-center justify-between">
+                    <span>Projetos Vinculados ({links.linkedProjects.length})</span>
+                    <span className="text-[10px] text-slate-400 font-medium lowercase">
+                      horas registradas no cronograma
+                    </span>
+                  </span>
+
+                  {links.linkedProjects.length === 0 ? (
+                    <div className="bg-slate-50 border border-dashed border-slate-300 p-4 rounded-xl text-center text-slate-500">
+                      Nenhum projeto possui horas alocadas para este centro de trabalho no cenário ativo.
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden max-h-48 overflow-y-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px]">
+                          <tr>
+                            <th className="py-2 px-3">Projeto</th>
+                            <th className="py-2 px-2 text-right">Horas</th>
+                            <th className="py-2 px-3 text-center">Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {links.linkedProjects.map((lp) => (
+                            <tr key={lp.projectId} className="hover:bg-slate-50">
+                              <td className="py-2 px-3">
+                                <div className="font-bold text-slate-900">{lp.projectName}</div>
+                                {lp.startDate && lp.endDate && (
+                                  <div className="text-[10px] text-slate-400">
+                                    {lp.startDate} até {lp.endDate}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2 px-2 text-right font-mono font-bold text-indigo-700">
+                                {Math.round(lp.hours).toLocaleString()} h
+                              </td>
+                              <td className="py-2 px-3 text-center">
+                                {onUpdateProject && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnlinkProject(viewingLinksWc, lp.projectId)}
+                                    className="px-2 py-0.5 text-[10px] bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold border border-rose-200 rounded cursor-pointer transition-colors"
+                                    title="Remover horas deste centro no projeto"
+                                  >
+                                    Desvincular
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* Section: Modelos de Curva S */}
+                {links.linkedTurbines.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <span className="font-black text-slate-800 uppercase tracking-wider text-[11px] block">
+                      Modelos de Curva S ({links.linkedTurbines.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-1">
+                      {links.linkedTurbines.map((lt, idx) => (
+                        <div
+                          key={idx}
+                          className="bg-slate-50 border border-slate-200 p-2 rounded-lg space-y-0.5"
+                        >
+                          <div className="font-bold text-slate-800">{lt.modelName}</div>
+                          <div className="text-[10px] text-indigo-600">{lt.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewingLinksWc(null);
+                    setLinkSuccessMessage(null);
+                  }}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
