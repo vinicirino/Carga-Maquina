@@ -786,7 +786,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => handlePercentageChange(percentage - 1)}
+              onClick={() => handlePercentageChange(Math.round(percentage) - 1)}
               className="w-7 h-7 rounded bg-white hover:bg-slate-100 active:bg-slate-200 text-slate-700 flex items-center justify-center font-black text-xs border border-slate-300 cursor-pointer shrink-0 transition-transform active:scale-95 shadow-2xs"
               title="Diminuir Peso (-1%)"
             >
@@ -805,7 +805,7 @@ export const VolumeDialControl: React.FC<VolumeDialControlProps> = ({
 
             <button
               type="button"
-              onClick={() => handlePercentageChange(percentage + 1)}
+              onClick={() => handlePercentageChange(Math.round(percentage) + 1)}
               className="w-7 h-7 rounded bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white flex items-center justify-center font-black text-xs border border-emerald-600 cursor-pointer shrink-0 transition-transform active:scale-95 shadow-2xs"
               title="Aumentar Peso (+1%)"
             >

@@ -7,6 +7,8 @@ export interface SectorCurveConfig {
   endPct: number; // 0 - 100% of project timeframe
   curveShape: CurveShape;
   volumeGain: number; // 0.5 to 2.0 (volume dial / multiplier)
+  initialPercentage?: number; // Starting percentage when loaded/created (prevents drift on adjustment)
+  initialHours?: number; // Starting sector hours when loaded/created
   customWorkCenterShares?: Record<string, number>; // wcId -> percentage within sector
   excludedWorkCenterIds?: string[]; // wcIds explicitly excluded from this sector in this model
   enabled?: boolean; // whether this sector group is included in this model (default true)
@@ -29,6 +31,8 @@ export interface TurbineProjectConfig {
   quantity: number;
   hoursPerTurbine: number;
   totalHours: number;
+  baseProjectHours?: number; // Stable anchor budget of the project to prevent drift on percentage tweaks
+  initialWorkCenterHours?: Record<string, number>; // Original work center hours before slider adjustments
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   staggeringMode: 'PARALLEL' | 'SEQUENTIAL' | 'STAGGERED';

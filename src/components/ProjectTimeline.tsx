@@ -89,13 +89,38 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
 
   // Initialize turbine project config from project.turbineConfig or generate default
   const [config, setConfig] = useState<TurbineProjectConfig>(() => {
+    const totalHours = getProjectTotalHours(project, workCenters);
+
     if (project.turbineConfig) {
-      return JSON.parse(JSON.stringify(project.turbineConfig));
+      const cfg: TurbineProjectConfig = JSON.parse(JSON.stringify(project.turbineConfig));
+      const baseHours = cfg.baseProjectHours || totalHours || cfg.totalHours || (cfg.hoursPerTurbine * (cfg.quantity || 1)) || 10000;
+      cfg.baseProjectHours = baseHours;
+      if (!cfg.initialWorkCenterHours && (project.workCenterHours || cfg.customWorkCenterHours)) {
+        cfg.initialWorkCenterHours = { ...(project.workCenterHours || cfg.customWorkCenterHours) };
+      }
+
+      if (cfg.customSectorCurves) {
+        Object.entries(cfg.customSectorCurves).forEach(([sName, sCurve]) => {
+          if (sCurve.initialPercentage === undefined) {
+            sCurve.initialPercentage = sCurve.percentage;
+          }
+          if (sCurve.initialHours === undefined) {
+            const wcsInGroup = workCenters.filter(
+              (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === sName.trim().toUpperCase()
+            );
+            const source = cfg.customWorkCenterHours || project.workCenterHours || {};
+            const gHrs = wcsInGroup.reduce(
+              (sum, wc) => sum + (source[wc.name] ?? source[wc.id] ?? 0),
+              0
+            );
+            sCurve.initialHours = gHrs;
+          }
+        });
+      }
+      return cfg;
     }
 
     // Derive initial config from project data
-    const totalHours = getProjectTotalHours(project, workCenters);
-
     const initialCurves: Record<string, SectorCurveConfig> = {};
     sectorGroups.forEach((g) => {
       // Calculate hours in this group
@@ -106,7 +131,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
         (sum, wc) => sum + (project.workCenterHours?.[wc.name] || project.workCenterHours?.[wc.id] || 0),
         0
       );
-      const pct = totalHours > 0 ? Number(((groupHours / totalHours) * 100).toFixed(1)) : 0;
+      const pct = totalHours > 0 ? Math.round((groupHours / totalHours) * 100) : 0;
 
       const customWcShares: Record<string, number> = {};
       if (groupHours > 0) {
@@ -123,6 +148,8 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
       initialCurves[g] = {
         sectorName: g,
         percentage: pct,
+        initialPercentage: pct,
+        initialHours: groupHours,
         startPct: 10,
         endPct: 60,
         curveShape: 's-curve',
@@ -137,6 +164,8 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
       quantity: 1,
       hoursPerTurbine: totalHours || 10000,
       totalHours: totalHours || 10000,
+      baseProjectHours: totalHours || 10000,
+      initialWorkCenterHours: project.workCenterHours ? { ...project.workCenterHours } : undefined,
       startDate: project.startDate,
       endDate: project.endDate,
       staggeringMode: 'STAGGERED',
@@ -148,24 +177,37 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
 
   // Keep dates and name in sync if project prop changes externally
   useEffect(() => {
+    const totalHours = getProjectTotalHours(project, workCenters);
     if (project.turbineConfig) {
       const cfg: TurbineProjectConfig = JSON.parse(JSON.stringify(project.turbineConfig));
+      const baseHours = cfg.baseProjectHours || totalHours || cfg.totalHours || (cfg.hoursPerTurbine * (cfg.quantity || 1)) || 10000;
+      cfg.baseProjectHours = baseHours;
       if (!cfg.customWorkCenterHours && project.workCenterHours) {
         cfg.customWorkCenterHours = { ...project.workCenterHours };
       }
+      if (!cfg.initialWorkCenterHours && (project.workCenterHours || cfg.customWorkCenterHours)) {
+        cfg.initialWorkCenterHours = { ...(project.workCenterHours || cfg.customWorkCenterHours) };
+      }
 
-      // Ensure customSectorCurves has customWorkCenterShares for each sector
+      // Ensure customSectorCurves has customWorkCenterShares and anchors for each sector
       if (cfg.customSectorCurves) {
         const sourceHours = cfg.customWorkCenterHours || project.workCenterHours || {};
         Object.entries(cfg.customSectorCurves).forEach(([sec, secCfg]) => {
+          const wcsInGroup = workCenters.filter(
+            (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === sec.trim().toUpperCase()
+          );
+          const groupHours = wcsInGroup.reduce(
+            (sum, wc) => sum + (sourceHours[wc.name] ?? sourceHours[wc.id] ?? 0),
+            0
+          );
+          if (secCfg.initialPercentage === undefined) {
+            secCfg.initialPercentage = secCfg.percentage;
+          }
+          if (secCfg.initialHours === undefined) {
+            secCfg.initialHours = groupHours;
+          }
+
           if (!secCfg.customWorkCenterShares || Object.keys(secCfg.customWorkCenterShares).length === 0) {
-            const wcsInGroup = workCenters.filter(
-              (wc) => (wc.category || 'OUTROS').trim().toUpperCase() === sec.trim().toUpperCase()
-            );
-            const groupHours = wcsInGroup.reduce(
-              (sum, wc) => sum + (sourceHours[wc.name] ?? sourceHours[wc.id] ?? 0),
-              0
-            );
             const customWcShares: Record<string, number> = {};
             if (groupHours > 0) {
               wcsInGroup.forEach((wc) => {
@@ -188,7 +230,9 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
         projectName: project.name,
         startDate: project.startDate,
         endDate: project.endDate,
+        baseProjectHours: prev.baseProjectHours || totalHours,
         customWorkCenterHours: project.workCenterHours ? { ...project.workCenterHours } : undefined,
+        initialWorkCenterHours: prev.initialWorkCenterHours || (project.workCenterHours ? { ...project.workCenterHours } : undefined),
       }));
     }
   }, [project.id, project.startDate, project.endDate, project.name, project.turbineConfig, project.workCenterHours, workCenters]);
@@ -253,6 +297,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
 
       return {
         ...prev,
+        baseProjectHours: prev.baseProjectHours || prev.totalHours,
         totalHours: newTotalHours,
         hoursPerTurbine: Math.round(newTotalHours / Math.max(1, prev.quantity || 1)),
         customSectorCurves: {
@@ -276,6 +321,7 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
 
       return {
         ...prev,
+        baseProjectHours: prev.baseProjectHours || prev.totalHours,
         totalHours: newTotalHours,
         hoursPerTurbine: Math.round(newTotalHours / Math.max(1, prev.quantity || 1)),
         customSectorCurves: {
@@ -296,7 +342,11 @@ const ProjectInlineEditor: React.FC<ProjectInlineEditorProps> = ({
       workCenterHours: calculationResult.workCenterHours,
       groupDates: calculationResult.groupDates,
       workCenterDates: calculationResult.workCenterDates,
-      turbineConfig: config,
+      turbineConfig: {
+        ...config,
+        totalHours: calculationResult.totalHours,
+        customWorkCenterHours: calculationResult.workCenterHours,
+      },
     };
     onSave(updatedProject);
     setSavedSuccess(true);

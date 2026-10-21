@@ -184,9 +184,12 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
           });
         }
 
+        const finalPct = existingCurve?.percentage ?? (hrs > 0 ? Math.round((sectorHours / hrs) * 100) : 0);
         curves[secName] = {
           sectorName: secName,
-          percentage: existingCurve?.percentage ?? calculatedPct,
+          percentage: finalPct,
+          initialPercentage: existingCurve?.initialPercentage ?? existingCurve?.percentage ?? finalPct,
+          initialHours: existingCurve?.initialHours ?? sectorHours,
           startPct: existingCurve?.startPct ?? 10,
           endPct: existingCurve?.endPct ?? 60,
           curveShape: existingCurve?.curveShape ?? 's-curve',
@@ -216,14 +219,22 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
         // Deep copy curves
         const curves: Record<string, SectorCurveConfig> = {};
         const baseCurves = selectedTurbine.sectorCurves || {};
+        const totalBudget = baseHours * quantity;
 
         allKnownSectorGroups.forEach((secName) => {
           if (baseCurves[secName]) {
-            curves[secName] = { ...baseCurves[secName] };
+            const bPct = baseCurves[secName].percentage || 0;
+            curves[secName] = {
+              ...baseCurves[secName],
+              initialPercentage: bPct,
+              initialHours: Math.round((totalBudget * bPct) / 100),
+            };
           } else {
             curves[secName] = {
               sectorName: secName,
               percentage: 0,
+              initialPercentage: 0,
+              initialHours: 0,
               startPct: 10,
               endPct: 60,
               curveShape: 's-curve',
@@ -349,12 +360,15 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
       return;
     }
 
+    const baseBudget = (hoursPerTurbine && quantity ? hoursPerTurbine * quantity : totalHoursInput) || totalHoursInput || 10000;
     const currentConfig: TurbineProjectConfig = {
       projectName: projectName || 'PROJETO PERSONALIZADO',
       turbineTypeId: selectedTypeId,
       quantity,
       hoursPerTurbine,
       totalHours: totalHoursInput,
+      baseProjectHours: baseBudget,
+      initialWorkCenterHours: customWcHours,
       startDate,
       endDate: endDate < startDate ? startDate : endDate,
       staggeringMode: 'STAGGERED',
@@ -385,12 +399,15 @@ export const CustomTurbineProjectModal: React.FC<CustomTurbineProjectModalProps>
 
   // Direct edit of hours on a sector
   const handleSectorHoursChange = (secName: string, newHours: number) => {
+    const baseBudget = (hoursPerTurbine && quantity ? hoursPerTurbine * quantity : totalHoursInput) || totalHoursInput || 10000;
     const currentConfig: TurbineProjectConfig = {
       projectName: projectName || 'PROJETO PERSONALIZADO',
       turbineTypeId: selectedTypeId,
       quantity,
       hoursPerTurbine,
       totalHours: totalHoursInput,
+      baseProjectHours: baseBudget,
+      initialWorkCenterHours: customWcHours,
       startDate,
       endDate: endDate < startDate ? startDate : endDate,
       staggeringMode: 'STAGGERED',
