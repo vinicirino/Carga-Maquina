@@ -4,7 +4,6 @@ import {
   FileCode,
   FileSpreadsheet,
   PlusCircle,
-  RotateCcw,
   Sparkles,
   Layers,
   SlidersHorizontal,
@@ -35,8 +34,6 @@ import {
 import { PlanningScenario } from '../types';
 
 interface SidebarProps {
-  activeModule: 'capacity' | 'gantt';
-  setActiveModule: (module: 'capacity' | 'gantt') => void;
   activeTab: 'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation';
   setActiveTab: (tab: 'overview' | 'workcenters' | 'projects' | 'heatmap' | 'simulation') => void;
   onOpenJsonModal: () => void;
@@ -48,8 +45,6 @@ interface SidebarProps {
   onOpenTurbineProjectModal: () => void;
   onOpenMatrixModal?: () => void;
   onOpenPrintReportModal?: () => void;
-  onResetData: () => void;
-  onSaveAsBaseline?: () => void;
   overloadCount: number;
   // Scenario Props
   scenarios: PlanningScenario[];
@@ -65,8 +60,6 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  activeModule,
-  setActiveModule,
   activeTab,
   setActiveTab,
   onOpenJsonModal,
@@ -78,8 +71,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenTurbineProjectModal,
   onOpenMatrixModal,
   onOpenPrintReportModal,
-  onResetData,
-  onSaveAsBaseline,
   overloadCount,
   scenarios,
   activeScenarioId,
@@ -180,107 +171,53 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Scrollable Navigation Body */}
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-800">
-        {/* Module Switcher */}
+        {/* Navigation Tabs */}
         <div>
           {!isCollapsed && (
             <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-              Módulo do Sistema
+              Navegação
             </div>
           )}
-          <div className={`grid ${isCollapsed ? 'grid-cols-1 gap-1.5' : 'grid-cols-2 gap-1'} bg-slate-950 p-1 rounded-xl border border-slate-800`}>
-            <button
-              onClick={() => setActiveModule('capacity')}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeModule === 'capacity'
-                  ? 'bg-indigo-600 text-white shadow-sm font-black'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
-              }`}
-              title="Módulo 1: Carga Máquina (Capacidade, Simulação de Cenários e Heatmap)"
-            >
-              <Factory className="w-3.5 h-3.5 shrink-0" />
-              {!isCollapsed && <span className="truncate">Carga Máquina</span>}
-            </button>
-            <button
-              onClick={() => setActiveModule('gantt')}
-              className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeModule === 'gantt'
-                  ? 'bg-indigo-600 text-white shadow-sm font-black'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
-              }`}
-              title="Módulo 2: Cronograma Gantt (WBS Multinível 0..N, Materiais e Dashboard de Execução)"
-            >
-              <CalendarRange className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-              {!isCollapsed && <span className="truncate">Gantt EAP</span>}
-            </button>
-          </div>
-        </div>
-
-        {/* Navigation Tabs (Only when in Capacity module) */}
-        {activeModule === 'capacity' ? (
-          <div>
-            {!isCollapsed && (
-              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Navegação Carga Máquina
-              </div>
-            )}
-            <nav className="space-y-1">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setIsMobileOpen(false);
-                    }}
-                    title={isCollapsed ? item.label : undefined}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-indigo-600 text-white shadow-sm font-bold'
-                        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/80'
-                    } ${isCollapsed ? 'justify-center px-2' : ''}`}
-                  >
-                    <Icon
-                      className={`w-4 h-4 shrink-0 ${
-                        isActive ? 'text-white' : item.color
+          <nav className="space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setIsMobileOpen(false);
+                  }}
+                  title={isCollapsed ? item.label : undefined}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium text-xs transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-sm font-bold'
+                      : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/80'
+                  } ${isCollapsed ? 'justify-center px-2' : ''}`}
+                >
+                  <Icon
+                    className={`w-4 h-4 shrink-0 ${
+                      isActive ? 'text-white' : item.color
+                    }`}
+                  />
+                  {!isCollapsed && (
+                    <span className="truncate flex-1 text-left">{item.label}</span>
+                  )}
+                  {!isCollapsed && item.badge && (
+                    <span
+                      className={`text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 ${
+                        item.badgeColor || 'bg-slate-800 text-slate-300'
                       }`}
-                    />
-                    {!isCollapsed && (
-                      <span className="truncate flex-1 text-left">{item.label}</span>
-                    )}
-                    {!isCollapsed && item.badge && (
-                      <span
-                        className={`text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 ${
-                          item.badgeColor || 'bg-slate-800 text-slate-300'
-                        }`}
-                      >
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-        ) : (
-          <div>
-            {!isCollapsed && (
-              <div className="px-3 mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Recursos do Módulo Gantt
-              </div>
-            )}
-            <div className="space-y-1.5 text-xs text-slate-300 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
-              <div className="flex items-center gap-2 text-indigo-400 font-bold">
-                <CalendarRange className="w-4 h-4" />
-                <span>WBS & Linha do Tempo</span>
-              </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Níveis hierárquicos 0 a N (Turbina, Conjuntos, Itens e Operações fabris) com zoom em Dias, Semanas, Meses e Anos.
-              </p>
-            </div>
-          </div>
-        )}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
 
         {/* Scenario Management Box */}
         <div className={`bg-slate-950/60 rounded-xl p-3 border border-slate-800/80 ${isCollapsed ? 'px-2 text-center' : ''}`}>
@@ -337,17 +274,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   )}
                 </div>
-
-                {!activeScenario?.isBaseline && onSaveAsBaseline && (
-                  <button
-                    onClick={onSaveAsBaseline}
-                    title="Definir este cenário atual como a Base Primária Oficial (Baseline do PCP)"
-                    className="flex items-center justify-center gap-1.5 w-full py-1 px-2 rounded-lg text-[10px] font-bold text-amber-300 bg-amber-950/40 hover:bg-amber-900/60 border border-amber-500/30 transition-colors cursor-pointer"
-                  >
-                    <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
-                    <span>Definir como Base Primária</span>
-                  </button>
-                )}
               </div>
 
               {/* Scenario Actions */}
@@ -595,31 +521,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      {/* Footer / Reset / Info */}
-      <div className="p-3 border-t border-slate-800/90 bg-slate-950/40 shrink-0 space-y-1.5">
-        {onSaveAsBaseline && (
-          <button
-            onClick={onSaveAsBaseline}
-            title="Salvar Estado Atual como Base Primária (Baseline Padrão de Inicialização)"
-            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-amber-300 bg-amber-950/40 hover:bg-amber-900/50 border border-amber-500/30 transition-colors cursor-pointer ${
-              isCollapsed ? 'justify-center px-2' : ''
-            }`}
-          >
-            <Star className="w-4 h-4 text-amber-400 fill-amber-400 shrink-0" />
-            {!isCollapsed && <span className="truncate">Definir como Base Primária</span>}
-          </button>
+      {/* Footer */}
+      <div className="p-3 border-t border-slate-800/90 bg-slate-950/40 shrink-0">
+        {!isCollapsed && (
+          <div className="text-[10px] text-slate-500 text-center font-medium">
+            PCP Carga Máquina • v2.4
+          </div>
         )}
-
-        <button
-          onClick={onResetData}
-          title="Restaurar Dados Iniciais de Fábrica"
-          className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/30 transition-colors cursor-pointer ${
-            isCollapsed ? 'justify-center px-2' : ''
-          }`}
-        >
-          <RotateCcw className="w-3.5 h-3.5 shrink-0" />
-          {!isCollapsed && <span className="truncate">Restaurar Base Padrão</span>}
-        </button>
       </div>
     </div>
   );

@@ -31,7 +31,6 @@ import { DEFAULT_TURBINE_TYPES } from './data/defaultTurbines';
 import { GanttTaskNode } from './types/gantt';
 import { INITIAL_GANTT_TASKS } from './data/defaultGanttData';
 import { recalculateHierarchyRollup } from './utils/ganttEngine';
-import { GanttModuleView } from './components/gantt/GanttModuleView';
 import {
   Layers,
   AlertTriangle,
@@ -161,9 +160,6 @@ export default function App() {
 
   // Read session cache once on initial mount to prevent demo data flash on F5
   const initialCache = useMemo(() => getAppSessionCache(), []);
-
-  // Active Module State (Carga Máquina vs Gantt EAP)
-  const [activeModule, setActiveModule] = useState<'capacity' | 'gantt'>('capacity');
 
   // Scenarios State - Loaded from session cache or Supabase, fallback to in-memory clean defaults
   const [scenarios, setScenarios] = useState<PlanningScenario[]>(() => {
@@ -2336,8 +2332,6 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col md:flex-row antialiased">
       {/* Sidebar Navigation (Side Menu) */}
       <Sidebar
-        activeModule={activeModule}
-        setActiveModule={setActiveModule}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenJsonModal={() => setIsJsonModalOpen(true)}
@@ -2349,8 +2343,6 @@ export default function App() {
         onOpenNewProjectModal={() => setIsNewProjectModalOpen(true)}
         onOpenTurbineProjectModal={() => setIsTurbineProjectModalOpen(true)}
         onOpenPrintReportModal={() => setIsPrintReportModalOpen(true)}
-        onResetData={handleResetData}
-        onSaveAsBaseline={handleSaveAsPrimaryBaseline}
         overloadCount={kpis.overloadedWorkCentersCount}
         scenarios={scenarios}
         activeScenarioId={activeScenarioId}
@@ -2400,20 +2392,6 @@ export default function App() {
         {isInitialLoading ? (
           <DashboardSkeleton />
         ) : (
-          <>
-            {/* MODULE 2: GANTT WBS MULTINÍVEL */}
-            {activeModule === 'gantt' && (
-              <GanttModuleView
-                tasks={ganttTasks}
-                onUpdateTasks={handleUpdateGanttTasks}
-                workCenters={workCenters}
-                projects={projects}
-                calendarExceptions={calendarExceptions}
-              />
-            )}
-
-        {/* MODULE 1: CARGA MÁQUINA */}
-        {activeModule === 'capacity' && (
           <>
             {/* Overview Tab (Visão Geral & KPIs: Macro / Executiva / Global) */}
             {activeTab === 'overview' && (
@@ -2484,8 +2462,6 @@ export default function App() {
             )}
           </>
         )}
-        </>
-      )}
       </main>
 
         {/* Compact Footer */}
@@ -2590,10 +2566,8 @@ export default function App() {
         activeScenarioId={activeScenarioId}
         onSelectScenario={handleSelectScenario}
         onUpdateScenarioInfo={handleUpdateScenarioInfo}
-        onSetBaselineScenario={handleSetBaselineScenario}
         onDuplicateScenario={handleDuplicateScenario}
         onDeleteScenario={handleDeleteScenario}
-        onSaveCurrentAsPrimaryBaseline={handleSaveAsPrimaryBaseline}
         onOpenNewScenarioModal={() => setIsNewScenarioModalOpen(true)}
         onOpenImportExportModal={handleOpenScenarioImportExportModal}
       />
@@ -2623,9 +2597,7 @@ export default function App() {
         onClose={() => setIsDbResetModalOpen(false)}
         onResetToDemo={handleResetToDemo}
         onResetToCleanCompanyState={handleResetToCleanCompanyState}
-        onRestoreOfficialBaseline={handleRestoreOfficialBaseline}
         onHardClearStorage={handleHardClearStorage}
-        hasOfficialBaseline={hasOfficialBaseline}
         currentProjectsCount={projects.length}
         currentWorkCentersCount={workCenters.length}
       />

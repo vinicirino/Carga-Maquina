@@ -27,10 +27,8 @@ interface ScenarioManagerModalProps {
   activeScenarioId: string;
   onSelectScenario: (id: string) => void;
   onUpdateScenarioInfo: (id: string, name: string, description: string) => void;
-  onSetBaselineScenario: (id: string) => void;
   onDuplicateScenario: (id: string) => void;
   onDeleteScenario: (id: string) => void;
-  onSaveCurrentAsPrimaryBaseline?: () => void;
   onOpenNewScenarioModal?: () => void;
   onOpenImportExportModal?: (tab?: 'export' | 'import') => void;
 }
@@ -42,10 +40,8 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
   activeScenarioId,
   onSelectScenario,
   onUpdateScenarioInfo,
-  onSetBaselineScenario,
   onDuplicateScenario,
   onDeleteScenario,
-  onSaveCurrentAsPrimaryBaseline,
   onOpenNewScenarioModal,
   onOpenImportExportModal,
 }) => {
@@ -291,16 +287,6 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
                           <Copy className="w-4 h-4" />
                         </button>
 
-                        {!scen.isBaseline && (
-                          <button
-                            onClick={() => onSetBaselineScenario(scen.id)}
-                            className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
-                            title="Definir como Cenário Padrão (Baseline)"
-                          >
-                            <Star className="w-4 h-4" />
-                          </button>
-                        )}
-
                         <button
                           onClick={() => {
                             setConfirmDeleteId(scen.id);
@@ -323,19 +309,6 @@ export const ScenarioManagerModal: React.FC<ScenarioManagerModalProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div className="flex flex-wrap items-center gap-2">
-            {onSaveCurrentAsPrimaryBaseline && (
-              <button
-                onClick={() => {
-                  onSaveCurrentAsPrimaryBaseline();
-                }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shadow-xs"
-                title="Salva os dados do cenário ativo como a Base Primária Oficial (Baseline) do PCP"
-              >
-                <Star className="w-3.5 h-3.5 fill-white text-white" />
-                <span>Salvar como Base Oficial</span>
-              </button>
-            )}
-
             <button
               onClick={() => downloadAllScenariosFile(scenarios, activeScenarioId)}
               className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-lg transition-colors cursor-pointer"

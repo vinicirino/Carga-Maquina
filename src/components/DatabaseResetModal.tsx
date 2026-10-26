@@ -16,9 +16,9 @@ interface DatabaseResetModalProps {
   onClose: () => void;
   onResetToDemo: () => void;
   onResetToCleanCompanyState: () => void;
-  onRestoreOfficialBaseline: () => void;
+  onRestoreOfficialBaseline?: () => void;
   onHardClearStorage: () => void;
-  hasOfficialBaseline: boolean;
+  hasOfficialBaseline?: boolean;
   currentProjectsCount: number;
   currentWorkCentersCount: number;
 }
@@ -28,9 +28,7 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
   onClose,
   onResetToDemo,
   onResetToCleanCompanyState,
-  onRestoreOfficialBaseline,
   onHardClearStorage,
-  hasOfficialBaseline,
   currentProjectsCount,
   currentWorkCentersCount,
 }) => {
@@ -74,12 +72,6 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
               Centros cadastrados: <strong className="text-slate-900 font-bold">{currentWorkCentersCount}</strong>
             </span>
           </div>
-          {hasOfficialBaseline && (
-            <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 font-semibold text-[11px]">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Base Primária Oficial Salva
-            </span>
-          )}
         </div>
 
         {/* Action Cards */}
@@ -130,55 +122,7 @@ export const DatabaseResetModal: React.FC<DatabaseResetModalProps> = ({
             </div>
           </div>
 
-          {/* Option 2: Restore Official Baseline */}
-          {hasOfficialBaseline && (
-            <div className="border border-emerald-200 rounded-xl p-4 bg-emerald-50/40 hover:bg-emerald-50/70 transition-all flex flex-col justify-between gap-3">
-              <div className="flex items-start gap-3">
-                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-lg shrink-0 mt-0.5">
-                  <ShieldCheck className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-slate-900">
-                    Restaurar Base Primária Oficial Salva
-                  </h3>
-                  <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
-                    Restaura o estado gravado como a Base Oficial do PCP da sua empresa.
-                  </p>
-                </div>
-              </div>
-              <div className="flex justify-end">
-                {confirmingAction === 'restore_baseline' ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-emerald-900 font-semibold">Restaurar dados para a Base Oficial?</span>
-                    <button
-                      onClick={() => setConfirmingAction(null)}
-                      className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200 rounded-lg font-bold cursor-pointer"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      onClick={() => {
-                        onRestoreOfficialBaseline();
-                        onClose();
-                      }}
-                      className="px-3 py-1.5 text-xs font-black bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors cursor-pointer shadow-xs"
-                    >
-                      Sim, Restaurar
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setConfirmingAction('restore_baseline')}
-                    className="px-4 py-2 text-xs font-bold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg transition-colors shadow-xs cursor-pointer"
-                  >
-                    Restaurar Base Primária
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Option 3: Load Demo Sample Data */}
+          {/* Option 2: Load Demo Sample Data */}
           <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/60 hover:bg-slate-100/70 transition-all flex flex-col justify-between gap-3">
             <div className="flex items-start gap-3">
               <div className="p-2 bg-slate-200 text-slate-700 rounded-lg shrink-0 mt-0.5">
